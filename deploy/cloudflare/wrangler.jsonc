@@ -1,0 +1,15 @@
+{
+  // Static demo site served by a Cloudflare Worker (static assets only, no server code).
+  // Deploy with: npm run deploy:demo   (see DEMO_DEPLOY.md)
+  "name": "ayush-epr-demo",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    // Output of `npm --prefix web run build:demo`, relative to this file.
+    "directory": "../../web/out-demo",
+    // Unknown URLs get the app's own 404 page.
+    "not_found_handling": "404-page"
+  },
+  // Only the main *.workers.dev address; no per-version preview URLs.
+  "workers_dev": true,
+  "preview_urls": false
+}

@@ -11,7 +11,9 @@
     "dev": "concurrently -k -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "cross-env PORT=4000 npm --prefix server run dev",
     "dev:web": "npm --prefix web run dev",
-    "install:all": "npm install && npm --prefix server install && npm --prefix web install"
+    "install:all": "npm install && npm --prefix server install && npm --prefix web install",
+    "build:demo": "npm --prefix web run build:demo",
+    "deploy:demo": "npm run build:demo && npx --yes wrangler@4 deploy -c deploy/cloudflare/wrangler.jsonc"
   },
   "devDependencies": {
     "concurrently": "^9.2.0",
