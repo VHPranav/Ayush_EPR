@@ -1,0 +1,20 @@
+{
+  "name": "ayush-epr-full",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "concurrently -k -n api,web -c blue,green \"npm:start:api\" \"npm:start:web\"",
+    "start:api": "cross-env PORT=4000 npm --prefix server start",
+    "start:web": "npm --prefix web start",
+    "build": "npm --prefix web run build",
+    "dev": "concurrently -k -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "cross-env PORT=4000 npm --prefix server run dev",
+    "dev:web": "npm --prefix web run dev",
+    "install:all": "npm install && npm --prefix server install && npm --prefix web install"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.0",
+    "cross-env": "^10.1.0"
+  }
+}

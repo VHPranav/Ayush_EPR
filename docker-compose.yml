@@ -1,0 +1,53 @@
+services:
+  db:
+    image: postgres:16
+    container_name: ayush-epr-db
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ayush_pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  server:
+    build: .
+    container_name: ayush-epr-server
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: 4000
+      DATABASE_URL: ${DATABASE_URL}
+      SESSION_HOURS: ${SESSION_HOURS:-8}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-20}
+      PASSWORD_SALT: ${PASSWORD_SALT}
+    depends_on:
+      db:
+        condition: service_healthy
+    # No published port: the API is only reachable from the web container (and not from the host).
+    expose:
+      - "4000"
+    volumes:
+      - ayush_documents:/app/storage
+  web:
+    build:
+      context: ./web
+      args:
+        API_URL: http://server:4000
+    container_name: ayush-epr-web
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "127.0.0.1:3000:3000"
+volumes:
+  ayush_pgdata:
+  ayush_documents:

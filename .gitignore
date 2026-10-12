@@ -1,0 +1,18 @@
+# secrets / local-only
+.env
+.env.local
+DEV_CREDENTIALS.local.txt
+
+# dependencies and build output
+node_modules/
+.next/
+out/
+
+# local database files and uploaded patient documents: never commit these
+db/.pgdata/
+server/storage/*
+!server/storage/.gitkeep
+
+# misc
+.DS_Store
+*.log

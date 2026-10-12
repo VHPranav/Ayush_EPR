@@ -1,0 +1,692 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AYUSH Central EPR</title>
+<style>
+:root{--g:#167a52;--p:#eaf6f0;--bg:#f5f8f6;--line:#d9e5df;--muted:#66756f}*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:var(--bg);color:#17352a}button,input,select,textarea{font:inherit}button{cursor:pointer}.login{min-height:100vh;display:grid;place-items:center;background:linear-gradient(135deg,#eaf6f0,#fff)}.loginbox{width:430px;max-width:92vw;background:#fff;padding:30px;border:1px solid var(--line);border-radius:18px;box-shadow:0 15px 45px #0001}.logo{height:54px}.logo img{max-height:54px;max-width:240px}.brand{font-size:23px;font-weight:800;color:var(--g)}.muted{color:var(--muted);font-size:12px}.status{padding:9px;border-radius:8px;background:#eef3f0;margin:15px 0;font-size:13px}.ok{color:#087844}.bad{color:#a33}.field{margin:9px 0}label{display:block;font-size:11px;font-weight:700;color:#53635d;margin-bottom:5px}input,select,textarea{width:100%;padding:9px;border:1px solid #cbd8d2;border-radius:8px;background:white}textarea{min-height:85px}.btn{border:1px solid #cbd8d2;background:#fff;padding:9px 13px;border-radius:8px}.primary{background:var(--g);border-color:var(--g);color:#fff}.danger{color:#a33}.app{display:none}.top{height:66px;background:#fff;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;padding:0 20px;position:sticky;top:0;z-index:3}.brandline{font-weight:800;color:var(--g)}.layout{display:flex;min-height:calc(100vh - 66px)}aside{width:220px;background:#fff;border-right:1px solid var(--line);padding:12px;overflow-y:auto}.nav{width:100%;border:0;background:#fff;text-align:left;padding:10px;border-radius:8px;margin:2px 0}.nav.active,.nav:hover{background:var(--p);color:var(--g);font-weight:700}main{flex:1;padding:20px;max-width:1500px;overflow-y:auto}.section{display:none}.section.active{display:block}.head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}.head h2{margin:0}.card{background:#fff;border:1px solid var(--line);border-radius:11px;margin-bottom:13px;overflow:hidden}.card h3{margin:0;font-size:15px}.ch,.cardhead{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.body{padding:14px}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.actions{display:flex;gap:7px;flex-wrap:wrap}.pill{background:var(--p);color:var(--g);border-radius:30px;padding:4px 9px;font-size:11px;display:inline-block}.patientbar{background:linear-gradient(100deg,#eaf6f0,#fff);border:1px solid #cfe3d9;padding:12px;border-radius:10px;margin-bottom:12px}.row{display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:7px;margin-bottom:7px}.row.med{grid-template-columns:2fr 1fr 1fr 1fr auto}.empty{padding:22px;text-align:center;color:var(--muted)}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px;border-bottom:1px solid #e8eeeb;text-align:left;vertical-align:top}th{font-size:10px;color:#63716b;text-transform:uppercase}.toast{display:none;position:fixed;right:20px;bottom:20px;background:#17352a;color:#fff;padding:11px 15px;border-radius:8px;z-index:999}@media(max-width:850px){aside{width:60px}.nav{font-size:0}.nav:before{content:'•';font-size:20px}.grid2,.grid3,.grid4{grid-template-columns:1fr}main{padding:10px}}
+</style></head><body>
+<div id="login" class="login"><div class="loginbox"><div class="logo"><img src="/c59260ac-dd80-4754-bc09-c4adc75ea726.png" onerror="this.style.display='none'"></div><div class="brand">Ayush Ayurveda & Yoga Therapy Centre</div><div class="muted">Central multi-user Electronic Patient Record</div><div id="status" class="status">Checking server/database…</div><div class="field"><label>Username</label><input id="username" value="reception"></div><div class="field"><label>Password</label><input id="password" type="password" value="ayush" onkeydown="if(event.key==='Enter')login()"></div><button class="btn primary" style="width:100%" onclick="login()">Sign in</button><div class="muted" style="margin-top:12px">Development: reception/ayush · doctor/ayush · pharmacist/ayush · admin/ayush</div></div></div>
+<div id="app" class="app"><header class="top"><div><div class="brandline">Ayush Ayurveda & Yoga Therapy Centre</div><div class="muted">Heal Naturally • Live Fully • Central PostgreSQL EPR</div></div><div class="actions"><span id="who" class="pill"></span><button class="btn" onclick="logout()">Logout</button></div></header><div class="layout"><aside>
+<button class="nav active" data-p="reception" onclick="page('reception')">Reception</button>
+<button class="nav" data-p="doctor" onclick="page('doctor')">Doctor</button>
+<button class="nav" data-p="rx" onclick="page('rx')">Prescription</button>
+<button class="nav" data-p="timeline" onclick="page('timeline')">Timeline</button>
+<button class="nav" data-p="clinical" onclick="page('clinical')">Clinical Modules</button>
+<button class="nav" data-p="sessions" onclick="page('sessions')">Therapy Sessions</button>
+<button class="nav" data-p="documents" onclick="page('documents')">Documents</button>
+<button class="nav" data-p="billing" onclick="page('billing')">Billing</button>
+<button class="nav" data-p="discharge" onclick="page('discharge')">Discharge</button>
+<button class="nav" data-p="pharmacy" onclick="page('pharmacy')">Pharmacy</button>
+<button class="nav" data-p="tm" onclick="page('tm')">Treatment Master</button>
+<button class="nav" data-p="appt" onclick="page('appt')">Appointments</button>
+<button class="nav" data-p="audit" onclick="page('audit')">Audit</button>
+</aside><main>
+<section id="reception" class="section active"><div class="head"><div><h2>Reception</h2><div class="muted">Registration is written directly to the central database.</div></div><button class="btn primary" onclick="clearForm()">New patient</button></div>
+<div class="card"><div class="ch"><h3>Patient Registration</h3><span class="pill">UHID assigned centrally on save</span></div><div class="body"><div class="grid4"><div class="field"><label>First name*</label><input id="first"></div><div class="field"><label>Middle name</label><input id="middle"></div><div class="field"><label>Last name*</label><input id="last"></div><div class="field"><label>DOB</label><input id="dob" type="date"></div></div><div class="grid4"><div class="field"><label>Sex</label><select id="sex"><option>Female</option><option>Male</option><option>Other</option></select></div><div class="field"><label>Phone</label><input id="phone"></div><div class="field"><label>Email</label><input id="email"></div><div class="field"><label>Blood group</label><input id="blood"></div></div><div class="grid3"><div class="field"><label>Nationality</label><input id="nationality"></div><div class="field"><label>Referral source</label><input id="referral"></div><div class="field"><label>Payment type</label><select id="insurance"><option>Self-pay</option><option>Insurance</option></select></div></div><div class="grid2"><div class="field"><label>Address</label><textarea id="address"></textarea></div><div class="field"><label>Allergies / ADR</label><textarea id="allergies"></textarea></div></div><div class="grid2"><div class="field"><label>Emergency contact</label><input id="emergency"></div><div class="field"><label>Primary physician</label><input id="physician"></div></div><button class="btn primary" onclick="savePatient()">Save & generate UHID</button></div></div>
+<div class="card"><div class="ch"><h3>Patient Directory</h3><input id="search" placeholder="Search UHID / name / phone" oninput="loadPatients()" style="max-width:300px"></div><div class="body" id="patients"></div></div></section>
+
+<section id="doctor" class="section"><div class="head"><div><h2>Doctor — Complete Clinical Record</h2><div class="muted">Modern assessment + Ayurveda assessment + clinician-authored integrated correlation.</div></div></div><div id="pbar"></div>
+<div class="card"><div class="ch"><h3>Modern Clinical Assessment</h3></div><div class="body"><div class="grid3"><div class="field"><label>Chief complaints</label><textarea id="cc"></textarea></div><div class="field"><label>HPI</label><textarea id="hpi"></textarea></div><div class="field"><label>Past medical/surgical history</label><textarea id="past"></textarea></div></div><div class="grid4"><div class="field"><label>BP</label><input id="bp"></div><div class="field"><label>Pulse</label><input id="pulse"></div><div class="field"><label>Temperature</label><input id="temp"></div><div class="field"><label>SpO₂</label><input id="spo2"></div></div><div class="grid4"><div class="field"><label>Height</label><input id="height"></div><div class="field"><label>Weight</label><input id="weight"></div><div class="field"><label>BMI</label><input id="bmi"></div><div class="field"><label>Respiratory rate</label><input id="rr"></div></div><div class="grid2"><div class="field"><label>Family/social/lifestyle</label><textarea id="family"></textarea></div><div class="field"><label>Modern diagnosis / assessment</label><textarea id="moderndx"></textarea></div></div></div></div>
+<div class="card"><div class="ch"><h3>Ayurveda Assessment</h3></div><div class="body"><div class="grid4"><div class="field"><label>Prakriti</label><select id="prakriti"><option>Vata</option><option>Pitta</option><option>Kapha</option><option>Vata-Pitta</option><option>Pitta-Kapha</option><option>Vata-Kapha</option><option>Tridoshic</option></select></div><div class="field"><label>Vikriti</label><input id="vikriti"></div><div class="field"><label>Agni</label><select id="agni"><option>Sama</option><option>Manda</option><option>Tikshna</option><option>Vishama</option></select></div><div class="field"><label>Ama</label><select id="ama"><option>Present</option><option>Absent</option><option>Uncertain</option></select></div></div><div class="grid2"><div class="field"><label>Ashtavidha Pariksha</label><textarea id="ashta"></textarea></div><div class="field"><label>Ayurvedic diagnosis / assessment</label><textarea id="ayurdx"></textarea></div></div></div></div>
+<div class="card"><div class="ch"><h3>Integrated Clinical Correlation</h3><span class="pill">Clinician authored</span></div><div class="body"><div class="grid2"><div class="field"><label>Modern findings</label><textarea id="modernfind"></textarea></div><div class="field"><label>Ayurveda findings</label><textarea id="ayurfind"></textarea></div></div><div class="field"><label>Correlation</label><textarea id="corr"></textarea></div><div class="grid2"><div class="field"><label>Integrated impression</label><textarea id="impression"></textarea></div><div class="field"><label>Goals / safety / monitoring</label><textarea id="goals"></textarea></div></div><button class="btn primary" onclick="saveClinical()">Save clinical record</button></div></div>
+<div class="card"><div class="ch"><h3>Notes</h3></div><div class="body"><div class="grid2"><div class="field"><label>Type</label><select id="noteType"><option>Consultation</option><option>Progress / SOAP</option><option>Ayurveda</option><option>Panchakarma</option><option>Yoga</option><option>Dietitian</option><option>Administrative</option></select></div><div class="field"><label>Note</label><textarea id="note"></textarea></div></div><button class="btn primary" onclick="saveNote()">Save note</button><div id="notes"></div></div></div></section>
+
+<section id="rx" class="section"><div class="head"><div><h2>Prescription</h2><div class="muted">Every save is a separate dated prescription in PostgreSQL.</div></div></div><div id="rxbar"></div><div class="card"><div class="ch"><h3>Sheet 1 — Treatments Prescribed</h3></div><div class="body"><div id="trrows"></div><button class="btn" onclick="addTr()">+ Add treatment</button></div></div><div class="card"><div class="ch"><h3>Sheet 2 — Internal Medicines</h3></div><div class="body"><div id="medrows"></div><button class="btn" onclick="addMed()">+ Add medicine</button></div></div><div class="card"><div class="body"><label>Prescription notes</label><textarea id="rxnotes"></textarea><br><br><button class="btn primary" onclick="saveRx()">Save prescription</button></div></div><div class="card"><div class="ch"><h3>Prescription history</h3></div><div class="body" id="rxhistory"></div></div></section>
+
+<section id="timeline" class="section"><div class="head"><div><h2>Longitudinal Patient Timeline</h2><div class="muted">Single chronological view of the central patient record.</div></div></div><div id="timelinePatient"></div><div class="card"><div class="body" id="timelineList"></div></div></section>
+
+<section id="clinical" class="section"><div class="head"><div><h2>Clinical Modules</h2><div class="muted">Problems, allergies, medication reconciliation, investigations, outcomes, referrals and integrated care plans.</div></div></div><div id="clinicalPatient"></div>
+<div class="grid2">
+<div class="card"><div class="cardhead"><h3>Problems</h3></div><div class="body"><div class="grid2"><input id="problem" placeholder="Problem / diagnosis"><select id="problemStatus"><option>ACTIVE</option><option>RESOLVED</option><option>HISTORICAL</option></select></div><textarea id="problemNotes" placeholder="Notes"></textarea><button class="btn primary" onclick="saveProblem()">Add Problem</button><div id="problemList"></div></div></div>
+<div class="card"><div class="cardhead"><h3>Allergies / ADR</h3></div><div class="body"><div class="grid3"><input id="allergen" placeholder="Allergen"><input id="reaction" placeholder="Reaction"><select id="severity"><option>Mild</option><option>Moderate</option><option>Severe</option></select></div><button class="btn primary" onclick="saveAllergy()">Add Allergy</button><div id="allergyList"></div></div></div>
+</div>
+<div class="grid2"><div class="card"><div class="cardhead"><h3>Medication Reconciliation</h3></div><div class="body"><div class="grid4"><input id="recMed" placeholder="Medicine"><input id="recDose" placeholder="Dose"><input id="recRoute" placeholder="Route"><input id="recFreq" placeholder="Frequency"></div><input id="recSource" placeholder="Source"><button class="btn primary" onclick="saveReconciliation()">Add Medication</button><div id="recList"></div></div></div>
+<div class="card"><div class="cardhead"><h3>Investigation / Results</h3></div><div class="body"><div class="grid3"><input id="invType" placeholder="Type e.g. MRI"><input id="invName" placeholder="Test name"><input id="invDate" type="date"></div><textarea id="invSummary" placeholder="Result summary"></textarea><button class="btn primary" onclick="saveInvestigation()">Save Investigation</button><div id="invList"></div></div></div></div>
+<div class="grid2"><div class="card"><div class="cardhead"><h3>Outcome Measurement</h3></div><div class="body"><div class="grid4"><input id="outDomain" placeholder="Domain"><input id="outScale" placeholder="Scale"><input id="outScore" placeholder="Score" type="number" step="0.01"><input id="outDate" type="date"></div><textarea id="outNarrative" placeholder="Clinical narrative"></textarea><button class="btn primary" onclick="saveOutcome()">Save Outcome</button><div id="outList"></div></div></div>
+<div class="card"><div class="cardhead"><h3>Referral</h3></div><div class="body"><div class="grid3"><input id="refTo" placeholder="Referred to"><input id="refSpec" placeholder="Specialty"><select id="refUrg"><option>ROUTINE</option><option>URGENT</option><option>EMERGENCY</option></select></div><textarea id="refReason" placeholder="Reason"></textarea><button class="btn primary" onclick="saveReferral()">Create Referral</button><div id="refList"></div></div></div></div>
+<div class="card"><div class="cardhead"><h3>Integrated Care Plan</h3></div><div class="body"><div class="grid3"><input id="cpType" value="INTEGRATED"><input id="cpReview" type="date"><select id="cpStatus"><option>ACTIVE</option><option>COMPLETED</option><option>ON HOLD</option></select></div><div class="grid3"><textarea id="cpGoals" placeholder="Goals"></textarea><textarea id="cpInterventions" placeholder="Interventions"></textarea><textarea id="cpMonitoring" placeholder="Monitoring"></textarea></div><button class="btn primary" onclick="saveCarePlan()">Save Care Plan</button><div id="cpList"></div></div></div>
+</section>
+
+<section id="sessions" class="section"><div class="head"><div><h2>Therapy / Panchakarma Sessions</h2><div class="muted">Record each treatment session, pre/post assessment, tolerance and adverse events.</div></div></div><div id="sessionPatient"></div><div class="card"><div class="body"><div class="grid4"><input id="sessDate" type="date"><input id="sessStart" type="time"><input id="sessEnd" type="time"><select id="sessStatus"><option>COMPLETED</option><option>PLANNED</option><option>CANCELLED</option></select></div><textarea id="sessPre" placeholder="Pre-assessment"></textarea><textarea id="sessProcedure" placeholder="Procedure / therapy notes"></textarea><textarea id="sessMaterials" placeholder="Materials / products"></textarea><div class="grid3"><input id="sessTolerance" placeholder="Tolerance"><input id="sessAdverse" placeholder="Adverse event"><input id="sessResponse" placeholder="Response"></div><textarea id="sessPost" placeholder="Post-assessment"></textarea><button class="btn primary" onclick="saveSession()">Save Session</button></div></div><div class="card"><div class="body" id="sessionList"></div></div></section>
+
+<section id="documents" class="section"><div class="head"><div><h2>Documents</h2><div class="muted">Documents are stored on the server, not in browser storage.</div></div></div><div id="docPatient"></div><div class="card"><div class="body"><div class="grid2"><select id="docType"><option>MRI</option><option>CT</option><option>X-RAY</option><option>LAB</option><option>DISCHARGE</option><option>REFERRAL</option><option>CONSENT</option><option>PHOTO</option><option>OTHER</option></select><input id="docFile" type="file"></div><button class="btn primary" onclick="uploadDocument()">Upload to central server</button></div></div><div class="card"><div class="body" id="docList"></div></div></section>
+
+<section id="billing" class="section"><div class="head"><div><h2>Billing</h2><div class="muted">Central patient billing ledger.</div></div></div><div id="billPatient"></div><div class="card"><div class="body"><div id="billRows"></div><button class="btn" onclick="addBillRow()">+ Add item</button><br><br><button class="btn primary" onclick="saveBilling()">Create Invoice</button></div></div><div class="card"><div class="body" id="billList"></div></div></section>
+
+<section id="discharge" class="section"><div class="head"><div><h2>Discharge Summary & Clinical Letters</h2><div class="muted">Versioned clinical discharge documentation stored centrally.</div></div></div><div id="disPatient"></div><div class="card"><div class="body"><textarea id="disAdmission" placeholder="Admission / presenting summary"></textarea><textarea id="disDiagnosis" placeholder="Diagnoses"></textarea><textarea id="disProcedures" placeholder="Procedures / treatments"></textarea><textarea id="disMedicines" placeholder="Medicines on discharge"></textarea><textarea id="disCourse" placeholder="Treatment course"></textarea><textarea id="disCondition" placeholder="Condition at discharge"></textarea><textarea id="disFollow" placeholder="Follow-up plan"></textarea><textarea id="disWarnings" placeholder="Warnings / safety advice"></textarea><button class="btn primary" onclick="saveDischarge()">Sign & Save Discharge Summary</button></div></div><div class="card"><div class="body" id="disList"></div></div></section>
+
+<section id="pharmacy" class="section"><div class="head"><div><h2>Pharmacy Stock</h2><div class="muted">Central stock database. Pharmacist role can add/update/delete.</div></div></div><div class="card"><div class="body"><div class="grid4"><div class="field"><label>Medicine name*</label><input id="medname"></div><div class="field"><label>Form</label><input id="medform"></div><div class="field"><label>Strength</label><input id="medstrength"></div><div class="field"><label>Batch</label><input id="batch"></div></div><div class="grid4"><div class="field"><label>Expiry</label><input id="expiry" type="date"></div><div class="field"><label>Quantity</label><input id="qty" type="number" step="0.001"></div><div class="field"><label>Unit</label><input id="unit"></div><div class="field"><label>Reorder level</label><input id="reorder" type="number" step="0.001"></div></div><div class="grid2"><div class="field"><label>Supplier</label><input id="supplier"></div><div class="field"><label>Location</label><input id="location"></div></div><button class="btn primary" onclick="saveStock()">Save stock</button></div></div><div class="card"><div class="ch"><h3>Current stock</h3></div><div class="body" id="stock"></div></div></section>
+
+<section id="tm" class="section"><div class="head"><div><h2>Treatment Master</h2><div class="muted">Central catalogue used by prescription.</div></div></div><div class="card"><div class="body"><div class="grid3"><div class="field"><label>Name*</label><input id="tname"></div><div class="field"><label>Category</label><input id="tcat"></div><div class="field"><label>Default duration</label><input id="tdur"></div></div><div class="field"><label>Description/instructions</label><textarea id="tdesc"></textarea></div><button class="btn primary" onclick="saveTreatment()">Add treatment</button></div></div><div class="card"><div class="body" id="tlist"></div></div></section>
+
+<section id="appt" class="section"><div class="head"><div><h2>Appointments / Follow-up</h2><div class="muted">Appointments are saved centrally and visible to Reception.</div></div></div><div id="abar"></div><div class="card"><div class="body"><div class="grid4"><div class="field"><label>Date</label><input id="adate" type="date"></div><div class="field"><label>Time</label><input id="atime" type="time"></div><div class="field"><label>Type</label><select id="atype"><option>FOLLOW-UP</option><option>CONSULTATION</option><option>THERAPY</option><option>REVIEW</option></select></div><div class="field"><label>Reason</label><input id="areason"></div></div><button class="btn primary" onclick="saveAppt()">Save & book</button></div></div><div class="card"><div class="ch"><h3>Upcoming appointments</h3></div><div class="body" id="alist"></div></div></section>
+
+<section id="audit" class="section"><div class="head"><div><h2>Audit</h2><div class="muted">Management/auditor access.</div></div></div><div class="card"><div class="body"><p>Audit records are append-only in PostgreSQL. This screen is intentionally restricted by server role.</p><button class="btn" onclick="loadAudit()">Refresh</button><div id="auditlog"></div></div></div></section>
+</main></div></div><div id="toast" class="toast"></div>
+
+<script>
+let T = sessionStorage.getItem('AYUSH_TOKEN') || '', token = T;
+let U = null, C = null, current = null, TM = [], RxT = [], RxM = [];
+const $ = x => document.getElementById(x);
+
+async function api(u, o = {}) {
+  o.headers = Object.assign({ 'Content-Type': 'application/json' }, o.headers || {}, T ? { 'Authorization': 'Bearer ' + T } : {});
+  const r = await fetch(u, o);
+  let d = {};
+  try { d = await r.json(); } catch {}
+  if (!r.ok) throw Error(d.error || 'Request failed');
+  return d;
+}
+
+function toast(x) {
+  const el = $('toast');
+  el.textContent = x;
+  el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', 2500);
+}
+
+async function check() {
+  try {
+    let d = await fetch('/api/health').then(r => r.json());
+    $('status').className = 'status ok';
+    $('status').textContent = d.ok ? '● Server online — PostgreSQL connected' : '● Database unavailable';
+  } catch {
+    $('status').className = 'status bad';
+    $('status').textContent = '● Server offline';
+  }
+}
+check();
+setInterval(check, 10000);
+
+async function login() {
+  try {
+    let d = await api('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username: $('username').value, password: $('password').value })
+    });
+    T = d.token;
+    token = d.token;
+    U = d.user;
+    sessionStorage.setItem('AYUSH_TOKEN', T);
+    sessionStorage.setItem('AYUSH_USER', JSON.stringify(U));
+    $('login').style.display = 'none';
+    $('app').style.display = 'block';
+    $('who').textContent = U.name + ' • ' + U.roles.join(', ');
+    await loadPatients();
+    page(U.roles.includes('RECEPTION') ? 'reception' : 'doctor');
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function logout() {
+  try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
+  sessionStorage.clear();
+  location.reload();
+}
+
+async function page(id) {
+  const patientRequired = ['doctor', 'rx', 'appt', 'timeline', 'clinical', 'sessions', 'documents', 'billing', 'discharge'];
+  if (!C && patientRequired.includes(id)) {
+    toast('Open a patient first');
+    return;
+  }
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  const target = $(id);
+  if (target) target.classList.add('active');
+  document.querySelectorAll('.nav').forEach(n => n.classList.toggle('active', n.dataset.p === id));
+
+  if (id === 'reception') loadPatients();
+  if (id === 'pharmacy') loadStock();
+  if (id === 'tm') loadTM();
+  if (id === 'rx') renderRx();
+  if (id === 'appt') loadAppts();
+  if (id === 'audit') loadAudit();
+  if (id === 'timeline') await loadTimeline();
+  if (['clinical', 'sessions', 'documents', 'billing', 'discharge'].includes(id)) await loadFullPatientModules();
+}
+
+async function loadPatients() {
+  let q = $('search')?.value || '';
+  let a = await api('/api/patients?q=' + encodeURIComponent(q));
+  $('patients').innerHTML = a.length
+    ? '<table><tr><th>UHID</th><th>Name</th><th>DOB</th><th>Sex</th><th>Phone</th><th></th></tr>' +
+      a.map(p => `<tr><td>${p.uhid}</td><td>${p.name}</td><td>${p.dob || '—'}</td><td>${p.sex || '—'}</td><td>${p.phone || '—'}</td><td><button class="btn" onclick="openPatient('${p.patient_id}')">Open</button></td></tr>`).join('') +
+      '</table>'
+    : '<div class="empty">No patients found. Click "New patient" above to register one.</div>';
+}
+
+function clearForm() {
+  ['first', 'middle', 'last', 'dob', 'phone', 'email', 'blood', 'nationality', 'referral', 'address', 'allergies', 'emergency', 'physician'].forEach(x => {
+    const el = $(x);
+    if (el) el.value = '';
+  });
+}
+
+async function savePatient() {
+  try {
+    let p = await api('/api/patients', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: [$('first').value, $('middle').value, $('last').value].filter(Boolean).join(' '),
+        dob: $('dob').value,
+        sex: $('sex').value,
+        phone: $('phone').value,
+        email: $('email').value,
+        nationality: $('nationality').value,
+        blood: $('blood').value,
+        insurance: $('insurance').value,
+        emergency: $('emergency').value,
+        referral: $('referral').value,
+        physician: $('physician').value,
+        address: $('address').value
+      })
+    });
+    toast('Patient saved: ' + p.uhid);
+    await openPatient(p.patient_id);
+    page('doctor');
+    loadPatients();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function openPatient(id) {
+  C = await api('/api/patients/' + id);
+  current = { ...C, id: C.patient_id };
+  bar();
+  loadClinicalAssessment();
+  toast('Opened ' + C.uhid);
+  await loadTimeline();
+  await loadFullPatientModules();
+}
+
+function loadClinicalAssessment() {
+  const records = C?.clinicalRecords || [];
+  const latest = records.find(x => x.section === 'INTEGRATED_CLINICAL_ASSESSMENT');
+  if (latest?.payload) {
+    const p = latest.payload;
+    if ($('cc')) $('cc').value = p.chiefComplaints || '';
+    if ($('hpi')) $('hpi').value = p.hpi || '';
+    if ($('past')) $('past').value = p.pastHistory || '';
+    if ($('family')) $('family').value = p.familyHistory || '';
+    if ($('bp')) $('bp').value = p.vitals?.bp || '';
+    if ($('pulse')) $('pulse').value = p.vitals?.pulse || '';
+    if ($('temp')) $('temp').value = p.vitals?.temp || '';
+    if ($('spo2')) $('spo2').value = p.vitals?.spo2 || '';
+    if ($('height')) $('height').value = p.vitals?.height || '';
+    if ($('weight')) $('weight').value = p.vitals?.weight || '';
+    if ($('bmi')) $('bmi').value = p.vitals?.bmi || '';
+    if ($('rr')) $('rr').value = p.vitals?.rr || '';
+    if ($('moderndx')) $('moderndx').value = p.modernDiagnosis || '';
+    if ($('prakriti')) $('prakriti').value = p.prakriti || 'Vata';
+    if ($('vikriti')) $('vikriti').value = p.vikriti || '';
+    if ($('agni')) $('agni').value = p.agni || 'Sama';
+    if ($('ama')) $('ama').value = p.ama || 'Present';
+    if ($('ashta')) $('ashta').value = p.ashtavidha || '';
+    if ($('ayurdx')) $('ayurdx').value = p.ayurvedaDiagnosis || '';
+    if ($('modernfind')) $('modernfind').value = p.modernFindings || '';
+    if ($('ayurfind')) $('ayurfind').value = p.ayurvedaFindings || '';
+    if ($('corr')) $('corr').value = p.correlation || '';
+    if ($('impression')) $('impression').value = p.integratedImpression || '';
+    if ($('goals')) $('goals').value = p.goalsSafety || '';
+  } else {
+    ['cc','hpi','past','family','bp','pulse','temp','spo2','height','weight','bmi','rr','moderndx','vikriti','ashta','ayurdx','modernfind','ayurfind','corr','impression','goals'].forEach(x => {
+      const el = $(x);
+      if (el) el.value = '';
+    });
+  }
+}
+
+function bar() {
+  let h = C
+    ? `<div class="patientbar"><b>${C.name}</b> <span class="pill">${C.uhid}</span><div class="muted">DOB ${C.dob || '—'} • ${C.sex || '—'} • ${C.phone || '—'}</div></div>`
+    : '';
+  ['pbar', 'rxbar', 'abar', 'timelinePatient', 'clinicalPatient', 'sessionPatient', 'docPatient', 'billPatient', 'disPatient'].forEach(x => {
+    const el = $(x);
+    if (el) el.innerHTML = h;
+  });
+  renderNotes();
+  renderRxHistory();
+  return h;
+}
+
+async function saveClinical() {
+  if (!C) return;
+  try {
+    let payload = {
+      chiefComplaints: $('cc').value,
+      hpi: $('hpi').value,
+      pastHistory: $('past').value,
+      familyHistory: $('family').value,
+      vitals: {
+        bp: $('bp').value,
+        pulse: $('pulse').value,
+        temp: $('temp').value,
+        spo2: $('spo2').value,
+        height: $('height').value,
+        weight: $('weight').value,
+        bmi: $('bmi').value,
+        rr: $('rr').value
+      },
+      modernDiagnosis: $('moderndx').value,
+      prakriti: $('prakriti').value,
+      vikriti: $('vikriti').value,
+      agni: $('agni').value,
+      ama: $('ama').value,
+      ashtavidha: $('ashta').value,
+      ayurvedaDiagnosis: $('ayurdx').value,
+      modernFindings: $('modernfind').value,
+      ayurvedaFindings: $('ayurfind').value,
+      correlation: $('corr').value,
+      integratedImpression: $('impression').value,
+      goalsSafety: $('goals').value
+    };
+    await api('/api/patients/' + C.patient_id + '/clinical-records', {
+      method: 'POST',
+      body: JSON.stringify({ section: 'INTEGRATED_CLINICAL_ASSESSMENT', payload })
+    });
+    C = await api('/api/patients/' + C.patient_id);
+    current = { ...C, id: C.patient_id };
+    toast('Clinical record saved centrally');
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function saveNote() {
+  if (!C) return;
+  try {
+    await api('/api/patients/' + C.patient_id + '/clinical-records', {
+      method: 'POST',
+      body: JSON.stringify({ section: 'NOTE', payload: { type: $('noteType').value, text: $('note').value } })
+    });
+    $('note').value = '';
+    C = await api('/api/patients/' + C.patient_id);
+    current = { ...C, id: C.patient_id };
+    toast('Note saved centrally');
+    renderNotes();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+function renderNotes() {
+  let n = (C?.clinicalRecords || []).filter(x => x.section === 'NOTE');
+  $('notes').innerHTML = n.length
+    ? n.map(x => `<div style="padding:8px;border-bottom:1px solid #eee"><b>${x.payload?.type || 'Note'}</b> • ${new Date(x.created_at).toLocaleString()}<br>${x.payload?.text || ''}</div>`).join('')
+    : '<div class="empty">No notes.</div>';
+}
+
+async function loadTM() {
+  try {
+    TM = await api('/api/treatment-master');
+    $('tlist').innerHTML = TM.length
+      ? '<table><tr><th>Name</th><th>Category</th><th>Frequency</th><th>Duration</th></tr>' +
+        TM.map(x => `<tr><td>${x.name}</td><td>${x.category || '—'}</td><td>${x.default_frequency || '—'}</td><td>${x.default_duration || '—'}</td></tr>`).join('') +
+        '</table>'
+      : '<div class="empty">No treatments in master catalogue.</div>';
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function saveTreatment() {
+  try {
+    await api('/api/treatment-master', {
+      method: 'POST',
+      body: JSON.stringify({ name: $('tname').value, category: $('tcat').value, duration: $('tdur').value, instructions: $('tdesc').value })
+    });
+    $('tname').value = '';
+    $('tcat').value = '';
+    $('tdur').value = '';
+    $('tdesc').value = '';
+    toast('Treatment master saved');
+    loadTM();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+function addTr() {
+  if (!TM.length) {
+    toast('Add Treatment Master records first in Treatment Master menu');
+    return;
+  }
+  let id = 'tr' + Date.now();
+  $('trrows').insertAdjacentHTML(
+    'beforeend',
+    `<div class="row" id="${id}">
+      <select class="tn">${TM.map(x => `<option value="${x.treatment_id}">${x.name}</option>`).join('')}</select>
+      <select class="tf"><option>Once daily</option><option>Twice daily</option><option>Thrice daily</option><option>As required</option></select>
+      <select class="td"><option>1 day</option><option>3 days</option><option>7 days</option><option>14 days</option><option>21 days</option><option>28 days</option></select>
+      <button class="btn danger" onclick="document.getElementById('${id}').remove()">Delete</button>
+    </div>`
+  );
+}
+
+function addMed() {
+  let id = 'm' + Date.now();
+  $('medrows').insertAdjacentHTML(
+    'beforeend',
+    `<div class="row med" id="${id}">
+      <input class="mn" placeholder="Medicine name">
+      <select class="mf"><option>Once daily</option><option>Twice daily</option><option>Thrice daily</option><option>Before meals</option><option>After meals</option></select>
+      <select class="md"><option>0.5 g</option><option>1 g</option><option>2 g</option><option>5 ml</option><option>10 ml</option><option>As prescribed</option></select>
+      <input class="mi" placeholder="Instructions">
+      <button class="btn danger" onclick="document.getElementById('${id}').remove()">Delete</button>
+    </div>`
+  );
+}
+
+async function renderRx() {
+  if (!C) return;
+  bar();
+  await loadTM();
+  if (!$('trrows').children.length && TM.length) addTr();
+  if (!$('medrows').children.length) addMed();
+  renderRxHistory();
+}
+
+function renderRxHistory() {
+  let r = C?.prescriptions || [];
+  $('rxhistory').innerHTML = r.length
+    ? r.map(x => `<div style="padding:8px;border-bottom:1px solid #eee"><b>${x.prescription_no}</b> • ${new Date(x.prescribed_at).toLocaleString()} • ${x.status}</div>`).join('')
+    : '<div class="empty">No prescriptions.</div>';
+}
+
+async function saveRx() {
+  try {
+    let ts = [...document.querySelectorAll('#trrows>.row')].map(r => {
+      let s = r.querySelector('.tn');
+      return { name: s.selectedOptions[0].text, frequency: r.querySelector('.tf').value, duration: r.querySelector('.td').value };
+    });
+    let ms = [...document.querySelectorAll('#medrows>.row')].map(r => ({
+      name: r.querySelector('.mn').value,
+      frequency: r.querySelector('.mf').value,
+      dose: r.querySelector('.md').value,
+      instructions: r.querySelector('.mi').value
+    }));
+    await api('/api/patients/' + C.patient_id + '/prescriptions', {
+      method: 'POST',
+      body: JSON.stringify({ treatments: ts, medicines: ms, notes: $('rxnotes').value })
+    });
+    C = await api('/api/patients/' + C.patient_id);
+    current = { ...C, id: C.patient_id };
+    $('trrows').innerHTML = '';
+    $('medrows').innerHTML = '';
+    $('rxnotes').value = '';
+    toast('Prescription saved centrally');
+    renderRx();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function loadStock() {
+  try {
+    let r = await api('/api/pharmacy/stock');
+    $('stock').innerHTML = r.length
+      ? '<table><tr><th>Medicine</th><th>Form</th><th>Batch</th><th>Expiry</th><th>Qty</th><th>Unit</th><th>Reorder</th></tr>' +
+        r.map(x => `<tr><td>${x.medicine_name}</td><td>${x.form || '—'}</td><td>${x.batch_no || '—'}</td><td>${x.expiry_date || '—'}</td><td>${x.quantity}</td><td>${x.unit || '—'}</td><td>${x.reorder_level}</td></tr>`).join('') +
+        '</table>'
+      : '<div class="empty">No stock recorded.</div>';
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function saveStock() {
+  try {
+    await api('/api/pharmacy/stock', {
+      method: 'POST',
+      body: JSON.stringify({
+        medicineName: $('medname').value,
+        form: $('medform').value,
+        strength: $('medstrength').value,
+        batchNo: $('batch').value,
+        expiryDate: $('expiry').value,
+        quantity: $('qty').value,
+        unit: $('unit').value,
+        reorderLevel: $('reorder').value,
+        supplier: $('supplier').value,
+        location: $('location').value
+      })
+    });
+    toast('Stock saved centrally');
+    loadStock();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function saveAppt() {
+  try {
+    let dt = $('adate').value + 'T' + $('atime').value;
+    await api('/api/patients/' + C.patient_id + '/appointments', {
+      method: 'POST',
+      body: JSON.stringify({ appointmentAt: dt, type: $('atype').value, reason: $('areason').value })
+    });
+    toast('Appointment saved centrally');
+    loadAppts();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function loadAppts() {
+  try {
+    let r = await api('/api/reception/followups?days=365');
+    $('alist').innerHTML = r.length
+      ? '<table><tr><th>Date/time</th><th>Patient</th><th>UHID</th><th>Type</th><th>Reason</th></tr>' +
+        r.map(x => `<tr><td>${new Date(x.appointment_at).toLocaleString()}</td><td>${x.name}</td><td>${x.uhid}</td><td>${x.type || ''}</td><td>${x.reason || ''}</td></tr>`).join('') +
+        '</table>'
+      : '<div class="empty">No upcoming appointments.</div>';
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function loadAudit() {
+  try {
+    let r = await api('/api/audit');
+    $('auditlog').innerHTML = '<table><tr><th>Time</th><th>Action</th><th>Table</th><th>Record</th></tr>' +
+      r.map(x => `<tr><td>${new Date(x.event_time).toLocaleString()}</td><td>${x.action}</td><td>${x.table_name || ''}</td><td>${x.record_id || ''}</td></tr>`).join('') +
+      '</table>';
+  } catch (e) {
+    $('auditlog').innerHTML = '<div class="empty">Audit access is restricted or route is unavailable.</div>';
+  }
+}
+
+async function loadTimeline() {
+  if (!current) return;
+  bar();
+  try {
+    const rows = await api(`/api/patients/${current.id}/timeline`);
+    $('timelineList').innerHTML = rows.length
+      ? `<table><tr><th>Date/Time</th><th>Type</th><th>Title</th><th>Detail</th></tr>${rows.map(x => `<tr><td>${new Date(x.event_time).toLocaleString()}</td><td><span class="pill">${x.event_type}</span></td><td>${x.title || ''}</td><td>${x.detail || ''}</td></tr>`).join('')}</table>`
+      : '<div class="empty">No timeline events recorded yet.</div>';
+  } catch (e) {
+    $('timelineList').innerHTML = `<div class="empty">Could not load timeline: ${e.message}</div>`;
+  }
+}
+
+async function loadFullPatientModules() {
+  if (!current) return;
+  const id = current.id;
+  bar();
+  try {
+    const [pro, all, rec, inv, out, ref, cp, sess, docs, bill, dis] = await Promise.all([
+      api(`/api/patients/${id}/problems`).catch(() => []),
+      api(`/api/patients/${id}/allergies`).catch(() => []),
+      api(`/api/patients/${id}/medication-reconciliation`).catch(() => []),
+      api(`/api/patients/${id}/investigations`).catch(() => []),
+      api(`/api/patients/${id}/outcomes`).catch(() => []),
+      api(`/api/patients/${id}/referrals`).catch(() => []),
+      api(`/api/patients/${id}/care-plans`).catch(() => []),
+      api(`/api/patients/${id}/treatment-sessions`).catch(() => []),
+      api(`/api/patients/${id}/documents`).catch(() => []),
+      api(`/api/patients/${id}/billing`).catch(() => ({ accounts: [] })),
+      api(`/api/patients/${id}/discharge`).catch(() => [])
+    ]);
+
+    $('problemList').innerHTML = pro.map(x => `<p><b>${x.problem}</b> <span class="pill">${x.status}</span><br>${x.notes || ''}</p>`).join('') || '<div class="empty">No problems recorded.</div>';
+    $('allergyList').innerHTML = all.map(x => `<p><b>${x.allergen}</b> — ${x.reaction || ''} (${x.severity || ''})</p>`).join('') || '<div class="empty">No allergies recorded.</div>';
+    $('recList').innerHTML = rec.map(x => `<p><b>${x.medicine_name}</b> ${x.dose || ''} ${x.route || ''} ${x.frequency || ''}</p>`).join('') || '<div class="empty">No reconciled medicines.</div>';
+    $('invList').innerHTML = inv.map(x => `<p><b>${x.test_name}</b> — ${x.result_summary || 'Pending'}</p>`).join('') || '<div class="empty">No investigations.</div>';
+    $('outList').innerHTML = out.map(x => `<p><b>${x.domain}</b> ${x.scale_name || ''}: ${x.score ?? ''} — ${x.narrative || ''}</p>`).join('') || '<div class="empty">No outcomes.</div>';
+    $('refList').innerHTML = ref.map(x => `<p><b>${x.specialty || ''}</b> → ${x.referred_to || ''} <span class="pill">${x.status}</span><br>${x.reason || ''}</p>`).join('') || '<div class="empty">No referrals.</div>';
+    $('cpList').innerHTML = cp.map(x => `<p><b>${x.plan_type}</b> — review ${x.review_date || '—'} <span class="pill">${x.status}</span></p>`).join('') || '<div class="empty">No care plans.</div>';
+    $('sessionList').innerHTML = sess.map(x => `<p><b>${x.session_date}</b> ${x.start_time || ''}-${x.end_time || ''} <span class="pill">${x.status}</span><br>${x.procedure_notes || ''}</p>`).join('') || '<div class="empty">No therapy sessions.</div>';
+    $('docList').innerHTML = docs.map(x => `<p><b>${x.file_name}</b> <span class="pill">${x.document_type}</span> — ${new Date(x.uploaded_at).toLocaleString()} <a class="btn" href="/api/documents/${x.id}/download" target="_blank">Download</a></p>`).join('') || '<div class="empty">No documents.</div>';
+    $('billList').innerHTML = (bill.accounts || []).map(x => `<p><b>${x.invoice_number}</b> — ₹${Number(x.total).toFixed(2)} <span class="pill">${x.status}</span></p>`).join('') || '<div class="empty">No invoices.</div>';
+    $('disList').innerHTML = dis.map(x => `<p><b>${x.summary_date || x.discharge_date}</b> — ${x.followup_plan || ''}</p>`).join('') || '<div class="empty">No discharge summaries.</div>';
+  } catch (e) {
+    console.error('Error loading patient modules:', e);
+  }
+}
+
+async function saveProblem() {
+  if (!current) return toast('Open a patient first');
+  await api(`/api/patients/${current.id}/problems`, {
+    method: 'POST',
+    body: JSON.stringify({ problem: $('problem').value, status: $('problemStatus').value, notes: $('problemNotes').value })
+  });
+  $('problem').value = '';
+  $('problemNotes').value = '';
+  toast('Problem saved');
+  loadFullPatientModules();
+}
+
+async function saveAllergy() {
+  if (!current) return toast('Open a patient first');
+  await api(`/api/patients/${current.id}/allergies`, {
+    method: 'POST',
+    body: JSON.stringify({ allergen: $('allergen').value, reaction: $('reaction').value, severity: $('severity').value })
+  });
+  $('allergen').value = '';
+  $('reaction').value = '';
+  toast('Allergy saved');
+  loadFullPatientModules();
+}
+
+async function saveReconciliation() {
+  if (!current) return toast('Open a patient first');
+  await api(`/api/patients/${current.id}/medication-reconciliation`, {
+    method: 'POST',
+    body: JSON.stringify({ medicineName: $('recMed').value, dose: $('recDose').value, route: $('recRoute').value, frequency: $('recFreq').value, source: $('recSource').value })
+  });
+  $('recMed').value = '';
+  toast('Medication reconciliation saved');
+  loadFullPatientModules();
+}
+
+async function saveInvestigation() {
+  if (!current) return toast('Open a patient first');
+  await api(`/api/patients/${current.id}/investigations`, {
+    method: 'POST',
+    body: JSON.stringify({ type: $('invType').value, testName: $('invName').value, requestedDate: $('invDate').value, summary: $('invSummary').value })
+  });
+  $('invName').value = '';
+  $('invSummary').value = '';
+  toast('Investigation saved');
+  loadFullPatientModules();
+}
+
+async function saveOutcome() {
+  if (!current) return toast('Open a patient first');
+  await api(`/api/patients/${current.id}/outcomes`, {
+    method: 'POST',
+    body: JSON.stringify({ domain: $('outDomain').value, scaleName: $('outScale').value, score: $('outScore').value, date: $('outDate').value, narrative: $('outNarrative').value })
+  });
+  toast('Outcome saved');
+  loadFullPatientModules();
+}
+
+async function saveReferral() {
+  if (!current) return toast('Open a patient first');
+  await api(`/api/patients/${current.id}/referrals`, {
+    method: 'POST',
+    body: JSON.stringify({ referredTo: $('refTo').value, specialty: $('refSpec').value, urgency: $('refUrg').value, reason: $('refReason').value })
+  });
+  toast('Referral saved');
+  loadFullPatientModules();
+}
+
+async function saveCarePlan() {
+  if (!current) return toast('Open a patient first');
+  await api(`/api/patients/${current.id}/care-plans`, {
+    method: 'POST',
+    body: JSON.stringify({ planType: $('cpType').value, reviewDate: $('cpReview').value, status: $('cpStatus').value, goals: $('cpGoals').value, interventions: $('cpInterventions').value, monitoring: $('cpMonitoring').value })
+  });
+  toast('Care plan saved');
+  loadFullPatientModules();
+}
+
+async function saveSession() {
+  if (!current) return toast('Open a patient first');
+  await api(`/api/patients/${current.id}/treatment-sessions`, {
+    method: 'POST',
+    body: JSON.stringify({ sessionDate: $('sessDate').value, startTime: $('sessStart').value, endTime: $('sessEnd').value, status: $('sessStatus').value, preAssessment: $('sessPre').value, procedureNotes: $('sessProcedure').value, materials: $('sessMaterials').value, tolerance: $('sessTolerance').value, adverseEvent: $('sessAdverse').value, response: $('sessResponse').value, postAssessment: $('sessPost').value })
+  });
+  toast('Treatment session saved');
+  loadFullPatientModules();
+}
+
+async function uploadDocument() {
+  if (!current) return toast('Open a patient first');
+  const f = $('docFile').files[0];
+  if (!f) return toast('Choose a file');
+  const fd = new FormData();
+  fd.append('file', f);
+  fd.append('documentType', $('docType').value);
+  const r = await fetch(`/api/patients/${current.id}/documents`, { method: 'POST', headers: { Authorization: 'Bearer ' + (T || token) }, body: fd });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    return toast(d.error || 'Upload failed');
+  }
+  toast('Document uploaded');
+  loadFullPatientModules();
+}
+
+let billRows = [];
+function addBillRow() {
+  billRows.push({ description: '', category: 'Treatment', quantity: 1, unitPrice: 0 });
+  renderBillRows();
+}
+function renderBillRows() {
+  $('billRows').innerHTML = billRows.map((x, i) => `
+    <div class="grid4" style="margin-bottom:8px">
+      <input value="${x.description}" placeholder="Description" onchange="billRows[${i}].description=this.value">
+      <input value="${x.category}" onchange="billRows[${i}].category=this.value">
+      <input type="number" value="${x.quantity}" onchange="billRows[${i}].quantity=this.value">
+      <input type="number" value="${x.unitPrice}" step="0.01" onchange="billRows[${i}].unitPrice=this.value">
+    </div>
+  `).join('');
+}
+
+async function saveBilling() {
+  if (!current) return toast('Open a patient first');
+  await api(`/api/patients/${current.id}/billing`, { method: 'POST', body: JSON.stringify({ items: billRows }) });
+  toast('Invoice saved');
+  billRows = [];
+  renderBillRows();
+  loadFullPatientModules();
+}
+
+async function saveDischarge() {
+  if (!current) return toast('Open a patient first');
+  await api(`/api/patients/${current.id}/discharge`, {
+    method: 'POST',
+    body: JSON.stringify({
+      admissionSummary: $('disAdmission').value,
+      diagnoses: $('disDiagnosis').value,
+      procedures: $('disProcedures').value,
+      medicines: $('disMedicines').value,
+      treatmentCourse: $('disCourse').value,
+      conditionAtDischarge: $('disCondition').value,
+      followupPlan: $('disFollow').value,
+      warnings: $('disWarnings').value
+    })
+  });
+  toast('Discharge summary signed and saved');
+  loadFullPatientModules();
+}
+</script></body></html>
