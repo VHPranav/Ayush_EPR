@@ -63,6 +63,9 @@ export interface Patient extends PatientSummary {
   email: string | null;
   clinicalRecords: ClinicalRecord[];
   prescriptions: Prescription[];
+  letters?: unknown[];
+  discharges?: unknown[];
+  appointments?: unknown[];
 }
 
 export interface TimelineEvent { event_time: string; event_type: string; event_id: string; title: string | null; detail: string | null }

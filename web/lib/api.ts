@@ -1,3 +1,6 @@
+/** Static demo build: no server. `NEXT_PUBLIC_DEMO` is inlined at build time, so real builds carry none of the demo code. */
+export const DEMO = process.env.NEXT_PUBLIC_DEMO === "1";
+
 const TOKEN_KEY = "AYUSH_TOKEN";
 const USER_KEY = "AYUSH_USER";
 export const PATIENT_KEY = "AYUSH_PATIENT";
@@ -56,6 +59,15 @@ async function parse<T>(r: Response): Promise<T> {
 }
 
 export async function api<T = unknown>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
+  if (DEMO) {
+    const { demoRequest } = await import("./demo/handler");
+    try {
+      return await demoRequest<T>(path, opts.method ?? (opts.body !== undefined ? "POST" : "GET"), opts.body);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401 && session.getToken()) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+      throw e;
+    }
+  }
   const r = await fetch(path, {
     method: opts.method ?? (opts.body !== undefined ? "POST" : "GET"),
     headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -65,12 +77,14 @@ export async function api<T = unknown>(path: string, opts: { method?: string; bo
 }
 
 export async function upload<T = unknown>(path: string, form: FormData): Promise<T> {
+  if (DEMO) throw new ApiError("Demo mode: uploads are disabled in this read-only preview.", 400);
   const r = await fetch(path, { method: "POST", headers: authHeaders(), body: form });
   return parse<T>(r);
 }
 
 // Downloads need the Bearer token, so a plain <a href> cannot be used; fetch the blob instead.
 export async function download(path: string, fileName: string) {
+  if (DEMO) throw new ApiError("Demo mode: downloads are disabled in this read-only preview.", 400);
   const r = await fetch(path, { headers: authHeaders() });
   if (!r.ok) {
     if (r.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
@@ -84,4 +98,15 @@ export async function download(path: string, fileName: string) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+/** Server/database health for the login page. The static demo has no server, so it is always "up". */
+export async function checkHealth(): Promise<"online" | "db-down" | "offline"> {
+  if (DEMO) return "online";
+  try {
+    const d = await fetch("/api/health").then(r => r.json());
+    return d.ok ? "online" : "db-down";
+  } catch {
+    return "offline";
+  }
 }

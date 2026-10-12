@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "build:demo": "cross-env NEXT_PUBLIC_DEMO=1 next build",
+    "demo": "cross-env NEXT_PUBLIC_DEMO=1 next dev -p 3100"
   },
   "dependencies": {
     "lucide-react": "^1.55.0",
@@ -19,6 +21,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "cross-env": "^10.1.0",
     "eslint": "^9",
     "eslint-config-next": "16.4.0",
     "tailwindcss": "^4",

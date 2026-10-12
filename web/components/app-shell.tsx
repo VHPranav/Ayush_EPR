@@ -11,6 +11,7 @@ import { useAuth } from "@/lib/auth";
 import { PatientProvider, usePatient } from "@/lib/patient";
 import type { Perm } from "@/lib/types";
 import { sidebarPref } from "@/lib/ui-prefs";
+import { DEMO } from "@/lib/api";
 import { GlobalSearch } from "./global-search";
 import { Avatar, Card, Empty } from "./ui";
 
@@ -146,6 +147,7 @@ function TopBar() {
     <div className="flex flex-wrap items-center gap-3 px-4 pb-3 pt-4 md:px-8 md:pt-6">
       <GlobalSearch />
       <div className="ml-auto flex items-center gap-3">
+        {DEMO && <span className="hidden whitespace-nowrap rounded-lg bg-warn-soft px-2.5 py-1.5 text-xs font-semibold text-warn sm:inline-block">Demo · sample data, view only</span>}
         {patient && (
           <div className="flex items-center gap-2.5 rounded-xl bg-white py-1.5 pl-1.5 pr-2 shadow-card">
             <Avatar name={patient.name} size={30} />

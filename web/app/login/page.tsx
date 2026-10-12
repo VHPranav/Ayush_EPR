@@ -1,12 +1,17 @@
 "use client";
 import { Eye, EyeOff, ScrollText, ShieldCheck, Stethoscope } from "lucide-react";
 import Image from "next/image";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { DottedGlobe } from "@/components/dotted-globe";
 import { Button, Field, Input } from "@/components/ui";
+import { DEMO, checkHealth } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { errMsg } from "@/lib/format";
+
+// Only the static demo build gets the role picker; `DEMO` is a build-time constant, so real builds drop it.
+const DemoRolePicker = DEMO ? dynamic(() => import("@/components/demo-role-picker")) : null;
 
 type Health = "checking" | "online" | "db-down" | "offline";
 
@@ -43,14 +48,7 @@ export default function LoginPage() {
   }, []);
 
   useEffect(() => {
-    const check = async () => {
-      try {
-        const d = await fetch("/api/health").then(r => r.json());
-        setHealth(d.ok ? "online" : "db-down");
-      } catch {
-        setHealth("offline");
-      }
-    };
+    const check = async () => setHealth(await checkHealth());
     check();
     const t = setInterval(check, 10000);
     return () => clearInterval(t);
@@ -123,8 +121,9 @@ export default function LoginPage() {
             <Button variant="primary" type="submit" className="w-full py-3 text-[15px]" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</Button>
 
             <p className="mt-6 text-center text-sm text-muted">
-              Forgot your password? Ask your administrator to reset it.
+              {DEMO ? "Demo build: use the role cards below, or any username above with the password demo." : "Forgot your password? Ask your administrator to reset it."}
             </p>
+            {DemoRolePicker && <DemoRolePicker />}
           </form>
         </div>
 

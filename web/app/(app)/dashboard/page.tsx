@@ -15,6 +15,8 @@ import { useFetch } from "@/lib/use-fetch";
 type Range = 6 | 12;
 const monthKey = (d: Date) => d.getFullYear() * 12 + d.getMonth();
 const DAY = 86_400_000;
+// "Dr. Kavita Rao" -> "Kavita" (skip honorifics when greeting)
+const firstName = (full: string) => full.replace(/^(dr|nurse|mr|mrs|ms|prof)\.?\s+/i, "").split(" ")[0];
 
 /** Registrations per calendar month for the last `months` months (oldest first). */
 function monthlyRegistrations(patients: PatientSummary[], months: number): Point[] {
@@ -139,7 +141,7 @@ export default function DashboardPage() {
     <>
       <PageHead
         title="Dashboard"
-        subtitle={`Welcome back${user ? `, ${user.name.split(" ")[0]}` : ""}. ${user ? `Signed in as ${user.roles.join(", ").replaceAll("_", " ").toLowerCase()}.` : ""}`}
+        subtitle={`Welcome back${user ? `, ${firstName(user.name)}` : ""}. ${user ? `Signed in as ${user.roles.join(", ").replaceAll("_", " ").toLowerCase()}.` : ""}`}
         actions={
           <div className="flex flex-wrap gap-2">
             {can("patients.register") && <Link href="/reception"><Button variant="primary">Register patient</Button></Link>}

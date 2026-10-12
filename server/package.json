@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test permissions.test.js"
+    "test": "node --test permissions.test.js",
+    "export:permissions": "node export-permissions.mjs"
   },
   "dependencies": {
     "embedded-postgres": "^18.4.0-beta.17",
