@@ -46,6 +46,7 @@ export interface ClinicalPayload {
 }
 
 export interface ClinicalRecord {
+  author_name?: string | null;
   record_id: string;
   section: string;
   payload: ClinicalPayload | null;
@@ -98,7 +99,7 @@ export interface TreatmentMaster {
   treatment_id: string; name: string; category: string | null;
   default_frequency: string | null; default_duration: string | null; instructions?: string | null;
 }
-export interface FollowUp { provider_name?: string | null; appointment_id?: string; patient_id?: string; appointment_at: string; name: string; uhid: string; type: string | null; reason: string | null }
+export interface FollowUp { provider_user?: string | null; provider_name?: string | null; appointment_id?: string; patient_id?: string; appointment_at: string; name: string; uhid: string; type: string | null; reason: string | null }
 export interface AuditEntry { event_time: string; action: string; table_name: string | null; record_id: string | null; username?: string | null; display_name?: string | null }
 
 export interface ManagedUser {

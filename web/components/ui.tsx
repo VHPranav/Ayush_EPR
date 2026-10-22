@@ -80,10 +80,11 @@ export function TextField({ label, value, onChange, ...p }: { label: string; val
 export function AreaField({ label, value, onChange, ...p }: { label: string; value: string; onChange: (v: string) => void } & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "value">) {
   return <Field label={label}><Textarea value={value} onChange={e => onChange(e.target.value)} {...p} /></Field>;
 }
-export function SelectField({ label, value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: readonly string[] }) {
+export function SelectField({ label, value, onChange, options, placeholder }: { label: string; value: string; onChange: (v: string) => void; options: readonly string[]; placeholder?: string }) {
   return (
     <Field label={label}>
       <Select value={value} onChange={e => onChange(e.target.value)}>
+        {placeholder && <option value="">{placeholder}</option>}
         {options.map(o => <option key={o}>{o}</option>)}
       </Select>
     </Field>

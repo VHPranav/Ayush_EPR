@@ -124,13 +124,18 @@ export default function DashboardPage() {
     <Card title="Upcoming appointments" bodyClass="p-0">
       {followups.error ? <Empty>Could not load: {followups.error}</Empty> : followups.loading ? <Empty>Loading…</Empty> : followups.data?.length ? (
         <ul className="m-0 list-none divide-y divide-line p-0">
-          {followups.data.slice(0, 6).map((a, i) => (
-            <li key={i} className="flex items-center gap-3 px-5 py-3.5">
-              <Avatar name={a.name} size={34} />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold text-ink">{a.name}</div>
-                <div className="truncate text-xs text-muted">{fmtDateTime(a.appointment_at)} · {a.type || "Appointment"}</div>
-              </div>
+          {/* The signed-in doctor's own appointments come first; clicking a row opens that patient. */}
+          {[...followups.data].sort((a, b) => Number(b.provider_user === user?.id) - Number(a.provider_user === user?.id)).slice(0, 6).map((a, i) => (
+            <li key={a.appointment_id ?? i}>
+              <button type="button" disabled={!a.patient_id || !can("patients.view")} onClick={() => a.patient_id && openPatient(a.patient_id)}
+                className="flex w-full items-center gap-3 px-5 py-3.5 text-left enabled:hover:bg-subtle">
+                <Avatar name={a.name} size={34} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-semibold text-ink">{a.name}</div>
+                  <div className="truncate text-xs text-muted">{fmtDateTime(a.appointment_at)} · {a.type || "Appointment"}</div>
+                </div>
+                {a.provider_user && a.provider_user === user?.id && <Pill>Yours</Pill>}
+              </button>
             </li>
           ))}
         </ul>

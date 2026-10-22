@@ -360,7 +360,7 @@ app.get('/api/patients/:id', auth, requirePerm('patients.view'), async (req, res
   if (!p.rows[0]) return res.status(404).json({ error: 'Patient not found' });
   const id = p.rows[0].patient_id;
   const [cr, rx, lt, ds, ap] = await Promise.all([
-    pool.query('SELECT * FROM clinical_records WHERE patient_id=$1 ORDER BY created_at DESC', [id]),
+    pool.query('SELECT cr.*, u.display_name AS author_name FROM clinical_records cr LEFT JOIN users u ON u.user_id=cr.authored_by WHERE cr.patient_id=$1 ORDER BY cr.created_at DESC', [id]),
     pool.query('SELECT * FROM prescriptions WHERE patient_id=$1 ORDER BY prescribed_at DESC', [id]),
     pool.query('SELECT * FROM letters WHERE patient_id=$1 ORDER BY created_at DESC', [id]),
     pool.query('SELECT * FROM discharge_summaries WHERE patient_id=$1 ORDER BY created_at DESC', [id]),
