@@ -790,7 +790,10 @@ app.post('/api/patients/:id/treatment-sessions', auth, requirePerm('sessions.wri
 });
 
 app.get('/api/patients/:id/administrations', auth, requirePerm('clinical.read'), async (req, res) => {
-  const { rows } = await pool.query('SELECT * FROM medication_administration WHERE patient_id=$1 ORDER BY COALESCE(administered_at,scheduled_at) DESC', [req.params.id]);
+  const { rows } = await pool.query(
+    `SELECT ma.*, u.display_name AS administered_by_name, pm.medicine_name FROM medication_administration ma
+     LEFT JOIN users u ON u.user_id=ma.administered_by LEFT JOIN prescription_medicines pm ON pm.row_id=ma.prescription_medicine_id
+     WHERE ma.patient_id=$1 ORDER BY COALESCE(ma.administered_at,ma.scheduled_at) DESC`, [req.params.id]);
   res.json(rows);
 });
 

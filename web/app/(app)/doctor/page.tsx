@@ -54,22 +54,31 @@ export default function DoctorPage() {
 function Record() {
   const { patient } = usePatient();
   const latest = patient!.clinicalRecords.find(r => r.section === "INTEGRATED_CLINICAL_ASSESSMENT");
+  const nurseVitals = patient!.clinicalRecords.find(r => r.section === "VITALS");
   // Re-key so the form re-initialises when another patient is opened or a new assessment is saved.
   return (
     <>
-      <AssessmentForm key={patient!.patient_id + (latest?.record_id ?? "")} latest={latest} patient={patient!} />
+      <AssessmentForm key={patient!.patient_id + (latest?.record_id ?? "") + (nurseVitals?.record_id ?? "")} latest={latest} nurseVitals={nurseVitals} patient={patient!} />
       <PreviousAssessments />
       <Notes />
     </>
   );
 }
 
-function AssessmentForm({ latest, patient }: { latest?: ClinicalRecord; patient: Patient }) {
+function AssessmentForm({ latest, nurseVitals, patient }: { latest?: ClinicalRecord; nurseVitals?: ClinicalRecord; patient: Patient }) {
   const { refresh } = usePatient();
   const { can } = useAuth();
   const canWrite = can("clinical.write");
   const toast = useToast();
-  const [f, setF] = useState<Form>(() => fromRecord(latest?.payload ?? {}));
+  // Vitals a nurse recorded after the last assessment pre-fill the form (the doctor can still edit them).
+  const [f, setF] = useState<Form>(() => {
+    const base = fromRecord(latest?.payload ?? {});
+    if (nurseVitals && (!latest || nurseVitals.created_at > latest.created_at)) {
+      const v = (nurseVitals.payload ?? {}) as Record<string, string>;
+      for (const k of ["bp", "pulse", "temp", "spo2", "height", "weight", "bmi", "rr"] as const) if (v[k]) base[k] = v[k];
+    }
+    return base;
+  });
   const [dirty, setDirty] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const set = (k: keyof Form) => (v: string) => {

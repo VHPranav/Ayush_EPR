@@ -53,7 +53,7 @@ export interface ClinicalRecord {
   created_at: string;
 }
 
-export interface RxMedicine { medicine_name: string; dose: string | null; frequency: string | null; instructions: string | null }
+export interface RxMedicine { row_id?: string; medicine_name: string; dose: string | null; frequency: string | null; instructions: string | null }
 export interface RxTreatment { treatment_name: string; frequency: string | null; duration: string | null }
 export interface Prescription {
   prescription_id: string;
@@ -77,6 +77,8 @@ export interface Patient extends PatientSummary {
 }
 
 export interface TimelineEvent { event_time: string; event_type: string; event_id: string; title: string | null; detail: string | null }
+export interface Administration { id: string; administered_at: string | null; status: string; dose: string | null; notes: string | null; adverse_event: string | null; medicine_name: string | null; administered_by_name: string | null }
+export interface VitalsPayload { bp?: string; pulse?: string; temp?: string; spo2?: string; height?: string; weight?: string; bmi?: string; rr?: string }
 export interface Problem { id: string; problem: string; status: string; notes: string | null }
 export interface Allergy { id: string; allergen: string; reaction: string | null; severity: string | null }
 export interface MedRec { id: string; medicine_name: string; dose: string | null; route: string | null; frequency: string | null }

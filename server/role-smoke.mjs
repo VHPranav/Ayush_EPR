@@ -214,6 +214,14 @@ ok((await call(tok.PHARMACIST, 'POST', `/api/prescriptions/${rxId}/dispense`, {}
 ok((await call(tok.PHARMACIST, 'POST', `/api/prescriptions/${rxId}/dispense`, {})).s === 409, 'cannot dispense twice');
 ok(!(await call(tok.PHARMACIST, 'GET', '/api/pharmacy/queue')).j.some(r => r.prescription_id === rxId), 'dispensed prescription leaves the queue');
 ok((await call(tok.PHARMACIST, 'GET', `/api/patients/${P}`)).j.prescriptions.some(r => r.prescription_id === rxId && r.status === 'DISPENSED'), 'status shows as DISPENSED');
+// --- nurse: vitals record and medication round
+ok((await call(tok.PANCHAKARMA_THERAPIST, 'POST', `/api/patients/${P}/clinical-records`, { section: 'VITALS', payload: { bp: '120/80' } })).s === 201, 'therapist can record vitals');
+ok((await call(tok.RECEPTION, 'POST', `/api/patients/${P}/clinical-records`, { section: 'VITALS', payload: { bp: '1' } })).s === 403, 'reception cannot record vitals');
+const rxm = (await call(tok.PHARMACIST, 'GET', `/api/patients/${P}`)).j.prescriptions.flatMap(r => r.medicines)[0];
+ok(!!rxm?.row_id, 'prescription medicines carry row_id');
+ok((await call(tok.AYURVEDA_PHYSICIAN, 'POST', `/api/patients/${P}/administrations`, { prescriptionMedicineId: rxm.row_id, dose: rxm.dose, status: 'GIVEN', notes: 'n' })).s === 201, 'medication round recorded');
+const adm2 = (await call(tok.AYURVEDA_PHYSICIAN, 'GET', `/api/patients/${P}/administrations`)).j;
+ok(adm2[0]?.medicine_name === rxm.medicine_name && !!adm2[0]?.administered_by_name, 'administration list shows medicine and who gave it');
 // rate limiting (last: it locks the account)
 let code; for (let i = 0; i < 12; i++) code = (await login('rt.finance', 'wrong-password')).s;
 ok(code === 429, 'login throttled after repeated failures, got ' + code);

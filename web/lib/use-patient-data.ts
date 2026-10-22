@@ -11,7 +11,7 @@ import { useFetch } from "./use-fetch";
  * saves to the same endpoint, toasts, and reloads. Replaces the old loadFullPatientModules().
  */
 export function usePatientData<T>(suffix: string) {
-  const { patient } = usePatient();
+  const { patient, refresh } = usePatient();
   const toast = useToast();
   const id = patient?.patient_id ?? null;
   const { data, error, loading, reload } = useFetch<T>(id ? `/api/patients/${id}/${suffix}` : null);
@@ -22,12 +22,14 @@ export function usePatientData<T>(suffix: string) {
       await api(`/api/patients/${id}/${suffix}`, { body });
       toast(successMessage);
       reload();
+      // The patient bar carries the allergy warning, so a new allergy must show there at once.
+      if (suffix === "allergies") await refresh();
       return true;
     } catch (e) {
       toast(errMsg(e));
       return false;
     }
-  }, [id, suffix, reload, toast]);
+  }, [id, suffix, reload, toast, refresh]);
 
   return { data, error, loading, reload, post };
 }
