@@ -32,6 +32,7 @@ const READ_PERMS: [RegExp, Perm][] = [
   [/^\/api\/reception\/followups$/, "appointments.read"],
   [/^\/api\/audit$/, "audit.read"],
   [/^\/api\/stats\/patients$/, "patients.view"],
+  [/^\/api\/billing\/invoices$/, "billing.read"],
   [/^\/api\/providers$/, "appointments.write"],
   [/^\/api\/pharmacy\/queue$/, "pharmacy.write"],
   [/^\/api\/users$/, "users.manage"],
@@ -84,7 +85,19 @@ export async function demoRequest<T>(path: string, method: string, body: unknown
   }
   if (route === "/api/pharmacy/stock") return d.stock as T;
   if (route === "/api/treatment-master") return d.treatments as T;
-  if (route === "/api/audit") return d.audit as T;
+  if (route === "/api/audit") {
+    const q = (url.searchParams.get("q") ?? "").toLowerCase(), act = url.searchParams.get("action") ?? "";
+    return d.audit.filter(a => (!act || a.action === act) && (!q || `${a.action} ${a.table_name ?? ""} ${a.record_id ?? ""}`.toLowerCase().includes(q))) as T;
+  }
+  if (route === "/api/billing/invoices") {
+    const status = url.searchParams.get("status") ?? "", q = (url.searchParams.get("q") ?? "").toLowerCase();
+    const invoices = d.summaries.flatMap(p => (d.billing[p.patient_id] ?? []).map(b => ({ ...b, account_date: (b as { account_date?: string }).account_date ?? new Date().toISOString().slice(0, 10), payer_type: null, patient_id: p.patient_id, name: p.name, uhid: p.uhid })))
+      .filter(i => (!status || i.status === status) && (!q || `${i.invoice_number} ${i.name} ${i.uhid}`.toLowerCase().includes(q)));
+    const all = d.summaries.flatMap(p => d.billing[p.patient_id] ?? []);
+    const open = all.filter(b => b.status === "OPEN");
+    const sum = (xs: { total: number | string }[]) => xs.reduce((n, b) => n + Number(b.total), 0);
+    return { summary: { open_count: open.length, open_total: sum(open), invoiced_month: sum(all.filter(b => b.status !== "VOID")), paid_month: sum(all.filter(b => b.status === "PAID")) }, invoices } as T;
+  }
   if (route === "/api/users") return d.users as T;
   if (route === "/api/reception/followups") {
     const days = Math.min(Number(url.searchParams.get("days") ?? 30), 365);

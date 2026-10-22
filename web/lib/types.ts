@@ -102,7 +102,9 @@ export interface TreatmentMaster {
   default_frequency: string | null; default_duration: string | null; instructions?: string | null;
 }
 export interface FollowUp { provider_user?: string | null; provider_name?: string | null; appointment_id?: string; patient_id?: string; appointment_at: string; name: string; uhid: string; type: string | null; reason: string | null }
-export interface AuditEntry { event_time: string; action: string; table_name: string | null; record_id: string | null; username?: string | null; display_name?: string | null }
+export interface InvoiceRow { id: string; invoice_number: string; account_date: string; status: string; total: number | string; payer_type: string | null; patient_id: string; name: string; uhid: string }
+export interface InvoiceSummary { open_count: number; open_total: number | string; invoiced_month: number | string; paid_month: number | string }
+export interface AuditEntry { details?: Record<string, unknown> | null; ip_address?: string | null; audit_id?: number; event_time: string; action: string; table_name: string | null; record_id: string | null; username?: string | null; display_name?: string | null }
 
 export interface ManagedUser {
   user_id: string;

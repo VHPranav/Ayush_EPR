@@ -55,6 +55,13 @@ export default function LoginPage() {
     return () => clearInterval(t);
   }, []);
 
+  // The login page can be kept alive while signed in: clear everything the previous person typed once they are signed out.
+  useEffect(() => {
+    if (!ready || user) return;
+    const t = setTimeout(() => { setPassword(""); setShowPw(false); setBusy(false); setError(""); }, 0);
+    return () => clearTimeout(t);
+  }, [ready, user]);
+
   // Signed out by expiry or deactivation: say so, and bring the user back to the page they were on after signing in.
   useEffect(() => {
     const t = setTimeout(() => {

@@ -170,7 +170,7 @@ app.post('/api/auth/login', async (req, res) => {
     );
     const u = rows[0];
     const ok = u && passwordMatches(password, u.password_hash);
-    await audit(c, { action: ok ? 'LOGIN_SUCCESS' : 'LOGIN_FAILURE', tableName: 'users', recordId: u?.user_id || null, req, details: { username } });
+    await audit(c, { userId: ok ? u.user_id : null, action: ok ? 'LOGIN_SUCCESS' : 'LOGIN_FAILURE', tableName: 'users', recordId: u?.user_id || null, req, details: { username } });
     if (!ok || !u.active) { recordFailure(keys); return res.status(401).json({ error: 'Invalid credentials' }); }
     failures.delete(keys[0]);
 
@@ -603,10 +603,20 @@ app.get('/api/stats/patients', auth, requirePerm('patients.view'), async (_req, 
   res.json({ total, months: rows });
 });
 
-app.get('/api/audit', auth, requirePerm('audit.read'), async (_req, res) => {
+// Filters: ?q= (user, action, table or record), ?action=, ?from=YYYY-MM-DD, ?to=YYYY-MM-DD, ?limit= (default 500, max 5000 for export).
+app.get('/api/audit', auth, requirePerm('audit.read'), async (req, res) => {
+  const q = String(req.query.q || '').trim().slice(0, 100);
+  const action = String(req.query.action || '').trim().slice(0, 60);
+  const day = v => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
+  const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 5000);
   const { rows } = await pool.query(
-    `SELECT a.audit_id, a.event_time, a.action, a.table_name, a.record_id, a.ip_address, u.username, u.display_name
-     FROM audit_log a LEFT JOIN users u ON u.user_id=a.user_id ORDER BY a.event_time DESC, a.audit_id DESC LIMIT 500`);
+    `SELECT a.audit_id, a.event_time, a.action, a.table_name, a.record_id, a.ip_address, a.details, u.username, u.display_name
+     FROM audit_log a LEFT JOIN users u ON u.user_id=a.user_id
+     WHERE ($1='' OR a.action=$1)
+       AND ($2='' OR u.username ILIKE $3 OR a.action ILIKE $3 OR a.table_name ILIKE $3 OR a.record_id ILIKE $3)
+       AND ($4::date IS NULL OR a.event_time >= $4::date) AND ($5::date IS NULL OR a.event_time < $5::date + 1)
+     ORDER BY a.event_time DESC, a.audit_id DESC LIMIT $6`,
+    [action, q, `%${q.replace(/[\\%_]/g, '\\$&')}%`, day(req.query.from), day(req.query.to), limit]);
   res.json(rows);
 });
 
@@ -861,6 +871,26 @@ app.post('/api/patients/:id/billing', auth, requirePerm('billing.write'), async 
   } finally {
     c.release();
   }
+});
+
+// All invoices across patients (with totals) for Finance and Management; ?status=OPEN|PAID|VOID, ?q= invoice no., patient name or UHID.
+app.get('/api/billing/invoices', auth, requirePerm('billing.read'), async (req, res) => {
+  const status = ['OPEN', 'PAID', 'VOID'].includes(req.query.status) ? req.query.status : '';
+  const q = String(req.query.q || '').trim().slice(0, 100);
+  const [list, sum] = await Promise.all([
+    pool.query(
+      `SELECT ba.id, ba.invoice_number, ba.account_date, ba.status, ba.total, ba.payer_type, p.patient_id, p.name, p.uhid
+       FROM billing_accounts ba JOIN patients p ON p.patient_id=ba.patient_id
+       WHERE ($1='' OR ba.status=$1) AND ($2='' OR ba.invoice_number ILIKE $3 OR p.name ILIKE $3 OR p.uhid ILIKE $3)
+       ORDER BY ba.created_at DESC LIMIT 200`, [status, q, `%${q.replace(/[\\%_]/g, '\\$&')}%`]),
+    pool.query(
+      `SELECT count(*) FILTER (WHERE status='OPEN')::int AS open_count,
+              COALESCE(sum(total) FILTER (WHERE status='OPEN'),0) AS open_total,
+              COALESCE(sum(total) FILTER (WHERE status<>'VOID' AND date_trunc('month',account_date)=date_trunc('month',CURRENT_DATE)),0) AS invoiced_month,
+              COALESCE(sum(total) FILTER (WHERE status='PAID' AND date_trunc('month',account_date)=date_trunc('month',CURRENT_DATE)),0) AS paid_month
+       FROM billing_accounts`),
+  ]);
+  res.json({ summary: sum.rows[0], invoices: list.rows });
 });
 
 app.put('/api/billing/:id', auth, requirePerm('billing.write'), async (req, res) => {

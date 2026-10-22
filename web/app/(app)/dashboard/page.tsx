@@ -5,12 +5,13 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AreaChart, Delta, type Point } from "@/components/charts";
 import { Avatar, Button, Card, Empty, PageHead, Pill, StatCard, Table, Td } from "@/components/ui";
 import { useAuth } from "@/lib/auth";
-import { errMsg, fmtDate, fmtDateTime } from "@/lib/format";
+import { errMsg, fmtDate, fmtDateTime, money as fmtMoney } from "@/lib/format";
+import { actionLabel, detailText } from "@/lib/audit-labels";
 import { usePatient } from "@/lib/patient";
 import { patientHome } from "@/lib/permissions";
 import { roleLabel } from "@/lib/roles";
 import { useToast } from "@/lib/toast";
-import type { AuditEntry, FollowUp, PatientSummary, StockItem } from "@/lib/types";
+import type { AuditEntry, FollowUp, InvoiceRow, InvoiceSummary, PatientSummary, StockItem } from "@/lib/types";
 import { useFetch } from "@/lib/use-fetch";
 
 type Range = 6 | 12;
@@ -56,8 +57,10 @@ export default function DashboardPage() {
 
   // Each source is only requested when the role may read it, so no widget ever shows a 403.
   const dispenser = can("pharmacy.write"); // pharmacist: the dashboard is about dispensing and stock, not registrations
-  const showPatients = can("patients.view") && !dispenser;
-  const showChart = can("patients.register") || can("billing.read");
+  const showMoney = can("billing.read");
+  // Finance and the pharmacist have no patient-flow duties, so their dashboards skip registration figures.
+  const showPatients = can("patients.view") && !dispenser && !(showMoney && !can("appointments.read"));
+  const showChart = showPatients && (can("patients.register") || can("billing.read"));
   const showAppts = can("appointments.read");
   const showStock = can("pharmacy.read");
   const showAudit = can("audit.read");
@@ -67,6 +70,7 @@ export default function DashboardPage() {
   const followups = useFetch<FollowUp[]>(showAppts ? "/api/reception/followups?days=14" : null);
   const stock = useFetch<StockItem[]>(showStock ? "/api/pharmacy/stock" : null);
   const queue = useFetch<unknown[]>(dispenser ? "/api/pharmacy/queue" : null);
+  const money = useFetch<{ summary: InvoiceSummary; invoices: InvoiceRow[] }>(showMoney ? "/api/billing/invoices?status=OPEN" : null);
   const audit = useFetch<AuditEntry[]>(showAudit ? "/api/audit" : null);
 
   const series = useMemo(() => (stats.data ? monthlySeries(stats.data.months, range) : null), [stats.data, range]);
@@ -94,6 +98,11 @@ export default function DashboardPage() {
     );
   }
   if (showAppts) cards.push(<StatCard key="a" label="Appointments · 14 days" value={num(followups, followups.data?.length ?? 0)} />);
+  if (showMoney) {
+    const s = money.data?.summary;
+    cards.push(<StatCard key="out" label="Outstanding" value={num(money, s ? fmtMoney(s.open_total) : 0)} hint={s?.open_count ? <Link href="/billing" className="font-semibold text-brand hover:underline">{s.open_count} open invoice{s.open_count === 1 ? "" : "s"}</Link> : null} />);
+    cards.push(<StatCard key="inv" label="Invoiced this month" value={num(money, s ? fmtMoney(s.invoiced_month) : 0)} />);
+  }
   if (dispenser) {
     cards.push(
       <StatCard key="q" label="Prescriptions to dispense" value={num(queue, queue.data?.length ?? 0)}
@@ -194,6 +203,18 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {showMoney && (
+        <Card title="Open invoices" aside={<Link href="/billing" className="text-sm font-semibold text-brand hover:underline">View all</Link>}>
+          {money.error ? <Empty>Could not load: {money.error}</Empty> : money.loading ? <Empty>Loading…</Empty> : money.data?.invoices.length ? (
+            <Table head={["Invoice", "Date", "Patient", "Total"]}>
+              {money.data.invoices.slice(0, 5).map(i => (
+                <tr key={i.id}><Td>{i.invoice_number}</Td><Td>{fmtDate(i.account_date)}</Td><Td>{i.name}</Td><Td>{fmtMoney(i.total)}</Td></tr>
+              ))}
+            </Table>
+          ) : <Empty>No open invoices. Everything is paid.</Empty>}
+        </Card>
+      )}
+
       {showStock && (
         <Card title="Pharmacy attention" aside={<Link href="/pharmacy" className="text-sm font-semibold text-brand hover:underline">Open pharmacy</Link>}>
           {stock.error ? <Empty>Could not load: {stock.error}</Empty> : stock.loading ? <Empty>Loading…</Empty> : attention.length ? (
@@ -220,9 +241,9 @@ export default function DashboardPage() {
       {showAudit && (
         <Card title="Recent audit activity" aside={<Link href="/audit" className="text-sm font-semibold text-brand hover:underline">View all</Link>}>
           {audit.error ? <Empty>Could not load: {audit.error}</Empty> : audit.loading ? <Empty>Loading…</Empty> : audit.data?.length ? (
-            <Table head={["Time", "User", "Action", "Table", "Record"]}>
+            <Table head={["Time", "User", "Action", "Details"]}>
               {audit.data.slice(0, 8).map((e, i) => (
-                <tr key={i}><Td>{fmtDateTime(e.event_time)}</Td><Td>{e.username || "—"}</Td><Td>{e.action}</Td><Td>{e.table_name}</Td><Td>{e.record_id}</Td></tr>
+                <tr key={e.audit_id ?? i}><Td>{fmtDateTime(e.event_time)}</Td><Td>{e.username || "—"}</Td><Td>{actionLabel(e.action)}</Td><Td><span className="text-xs text-muted">{detailText(e.details)}</span></Td></tr>
               ))}
             </Table>
           ) : <Empty>No audit events yet.</Empty>}

@@ -1,12 +1,15 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { CURRENCY, errMsg, fmtDate, money } from "@/lib/format";
 import { useToast } from "@/lib/toast";
 import { usePatientData } from "@/lib/use-patient-data";
-import type { BillingAccount, BillingItem } from "@/lib/types";
-import { Button, Card, Empty, Grid, Input, PageHead, Pill, RequirePatient, TextField } from "@/components/ui";
+import type { BillingAccount, BillingItem, InvoiceRow, InvoiceSummary } from "@/lib/types";
+import { useFetch } from "@/lib/use-fetch";
+import { usePatient } from "@/lib/patient";
+import { PatientBar, Table, Td } from "@/components/ui";
+import { Button, Card, Empty, Grid, Input, PageHead, Pill, TextField } from "@/components/ui";
 
 interface Row { description: string; category: string; quantity: number; unitPrice: number }
 const newRow = (): Row => ({ description: "", category: "Treatment", quantity: 1, unitPrice: 0 });
@@ -15,8 +18,80 @@ const TONE = { OPEN: "amber", PAID: "green", VOID: "gray" } as const;
 export default function BillingPage() {
   return (
     <>
-      <PageHead title="Billing" subtitle="Create invoices, record payment and view the patient's billing history." />
-      <RequirePatient><Billing /></RequirePatient>
+      <PageHead title="Billing" subtitle="Every invoice at a glance. To create an invoice, open a patient first." />
+      <Overview />
+      <PatientSection />
+    </>
+  );
+}
+
+function PatientSection() {
+  const { patient } = usePatient();
+  if (!patient) return <p className="m-0 mb-6 text-sm text-muted">To create or review one patient&apos;s invoices, find them with the search bar above.</p>;
+  return <><PatientBar /><Billing /></>;
+}
+
+/** Invoices across all patients with the headline totals, filterable by status and searchable. */
+function Overview() {
+  const { can } = useAuth();
+  const toast = useToast();
+  const { open } = usePatient();
+  const [status, setStatus] = useState<"" | "OPEN" | "PAID" | "VOID">("OPEN");
+  const [q, setQ] = useState("");
+  const [term, setTerm] = useState("");
+  useEffect(() => { const t = setTimeout(() => setTerm(q.trim()), 250); return () => clearTimeout(t); }, [q]);
+  const { data, error, loading, reload } = useFetch<{ summary: InvoiceSummary; invoices: InvoiceRow[] }>(`/api/billing/invoices?status=${status}&q=${encodeURIComponent(term)}`);
+
+  async function setInvoice(i: InvoiceRow, next: "PAID" | "VOID") {
+    if (next === "VOID" && !window.confirm(`Void invoice ${i.invoice_number}?`)) return;
+    try {
+      await api(`/api/billing/${i.id}`, { method: "PUT", body: { status: next } });
+      toast(next === "PAID" ? "Marked as paid" : "Invoice voided");
+      reload();
+    } catch (e) {
+      toast(errMsg(e));
+    }
+  }
+  const sum = data?.summary;
+  return (
+    <>
+      <div className="mb-5 grid grid-cols-1 gap-5 sm:grid-cols-3">
+        {[["Outstanding", sum ? money(sum.open_total) : "…", sum ? `${sum.open_count} open invoice${sum.open_count === 1 ? "" : "s"}` : ""], ["Invoiced this month", sum ? money(sum.invoiced_month) : "…", "excluding voided"], ["Paid this month", sum ? money(sum.paid_month) : "…", "invoices dated this month"]].map(([label, value, hint]) => (
+          <section key={label} className="rounded-2xl bg-white p-5 shadow-card">
+            <div className="text-sm font-medium text-muted">{label}</div>
+            <div className="mt-2 text-[28px] font-semibold leading-8 text-ink">{value}</div>
+            <div className="mt-1 text-xs text-muted">{hint}</div>
+          </section>
+        ))}
+      </div>
+      <Card
+        title="All invoices"
+        aside={<input value={q} onChange={e => setQ(e.target.value)} placeholder="Invoice no., patient or UHID" aria-label="Search invoices" className="w-full max-w-[260px] rounded-xl border border-line-strong bg-white px-3.5 py-2 text-sm placeholder:text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-ring" />}
+      >
+        <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Status">
+          {([["OPEN", "Open"], ["PAID", "Paid"], ["VOID", "Void"], ["", "All"]] as const).map(([k, label]) => (
+            <button key={k} type="button" aria-pressed={status === k} onClick={() => setStatus(k)}
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium ${status === k ? "bg-brand text-white" : "bg-hover text-ink-2 hover:text-ink"}`}>{label}</button>
+          ))}
+        </div>
+        {error ? <Empty>Could not load: {error}</Empty> : loading ? <Empty>Loading…</Empty> : !data?.invoices.length ? <Empty>No invoices match.</Empty> : (
+          <Table head={["Invoice", "Date", "Patient", "Total", "Status", ""]}>
+            {data.invoices.map(i => (
+              <tr key={i.id}>
+                <Td>{i.invoice_number}</Td><Td>{fmtDate(i.account_date)}</Td><Td>{i.name} <span className="text-xs text-muted">{i.uhid}</span></Td><Td>{money(i.total)}</Td>
+                <Td><Pill tone={TONE[i.status as keyof typeof TONE] ?? "gray"}>{i.status}</Pill></Td>
+                <Td>
+                  <span className="flex flex-wrap gap-1.5">
+                    {can("billing.write") && i.status === "OPEN" && <Button variant="primary" onClick={() => setInvoice(i, "PAID")}>Mark paid</Button>}
+                    {can("billing.write") && i.status === "OPEN" && <Button variant="danger" onClick={() => setInvoice(i, "VOID")}>Void</Button>}
+                    <Button onClick={() => open(i.patient_id).catch(e => toast(errMsg(e)))}>Open patient</Button>
+                  </span>
+                </Td>
+              </tr>
+            ))}
+          </Table>
+        )}
+      </Card>
     </>
   );
 }

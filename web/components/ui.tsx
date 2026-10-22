@@ -182,7 +182,7 @@ export function RequirePatient({ children }: { children: ReactNode }) {
     <Card>
       <Empty>
         Open a patient first. Use the search bar above, or{" "}
-        <Link href="/reception" className="font-semibold text-brand underline">go to Reception</Link> and choose one from the directory.
+        <Link href="/reception" className="font-semibold text-brand underline">go to Patients</Link> and choose one from the directory.
       </Empty>
     </Card>
   );

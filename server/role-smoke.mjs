@@ -229,6 +229,18 @@ ok((await call(tok.YOGA_THERAPIST, 'POST', `/api/patients/${P}/treatment-session
 ok((await call(tok.YOGA_THERAPIST, 'POST', `/api/patients/${P}/treatment-sessions`, { prescriptionTreatmentId: trId, procedureNotes: 'done', adverseEvent: 'rash' })).s === 201, 'session linked to a prescribed treatment');
 const sess = (await call(tok.YOGA_THERAPIST, 'GET', `/api/patients/${P}/treatment-sessions`)).j;
 ok(sess[0]?.treatment_name && sess[0]?.practitioner_name && sess[0]?.adverse_event === 'rash', 'session list shows treatment, practitioner and adverse event');
+// --- finance overview and audit filters
+const invs = await call(tok.FINANCE, 'GET', '/api/billing/invoices?status=PAID');
+ok(invs.s === 200 && invs.j.invoices.every(i => i.status === 'PAID' && i.name && i.uhid) && Number(invs.j.summary.open_count) >= 0, 'finance sees invoices across patients');
+ok((await call(tok.FINANCE, 'GET', '/api/billing/invoices?q=Test%20Patient')).j.invoices.length > 0, 'invoice search by patient name');
+ok((await call(tok.DIETITIAN, 'GET', '/api/billing/invoices')).s === 403, 'dietitian cannot see all invoices');
+ok((await call(tok.MANAGER, 'GET', '/api/billing/invoices')).s === 200, 'manager sees all invoices');
+const af = (await call(tok.AUDITOR, 'GET', '/api/audit?action=CREATE_INVOICE')).j;
+ok(af.length > 0 && af.every(a => a.action === 'CREATE_INVOICE') && af[0].details?.invoice, 'audit filter by action, with details');
+ok((await call(tok.AUDITOR, 'GET', '/api/audit?q=rt.reception')).j.every(a => a.username === 'rt.reception' || /rt.reception/i.test(a.action + a.table_name + a.record_id)), 'audit search by user');
+ok((await call(tok.AUDITOR, 'GET', '/api/audit?from=2999-01-01')).j.length === 0, 'audit date filter');
+ok((await call(tok.AUDITOR, 'GET', '/api/audit?limit=2')).j.length === 2, 'audit limit');
+ok((await call(tok.AUDITOR, 'GET', "/api/audit?q=%25_'")).s === 200, 'audit search is injection-safe');
 // rate limiting (last: it locks the account)
 let code; for (let i = 0; i < 12; i++) code = (await login('rt.finance', 'wrong-password')).s;
 ok(code === 429, 'login throttled after repeated failures, got ' + code);
