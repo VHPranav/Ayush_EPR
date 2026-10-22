@@ -35,19 +35,32 @@ type View = "day" | "week" | "month";
 /** Places overlapping appointments side by side inside one column. */
 function layout(items: CalAppt[]) {
   const sorted = [...items].sort((a, b) => +new Date(a.appointment_at) - +new Date(b.appointment_at));
-  const out: { a: CalAppt; lane: number; lanes: number }[] = [];
-  let cluster: typeof out = [], laneEnds: number[] = [], clusterEnd = 0;
-  const close = () => { for (const c of cluster) c.lanes = laneEnds.length; out.push(...cluster); cluster = []; laneEnds = []; };
+  type Placed = { a: CalAppt; lane: number; lanes: number; cluster: number };
+  const out: Placed[] = [];
+  let cluster: Placed[] = [], laneEnds: number[] = [], clusterEnd = 0, clusterId = 0;
+  const close = () => { for (const c of cluster) c.lanes = laneEnds.length; out.push(...cluster); cluster = []; laneEnds = []; clusterId++; };
   for (const a of sorted) {
     const s = +new Date(a.appointment_at), e = +endOf(a);
     if (cluster.length && s >= clusterEnd) close();
     let lane = laneEnds.findIndex(le => le <= s);
     if (lane === -1) { lane = laneEnds.length; laneEnds.push(e); } else laneEnds[lane] = e;
     clusterEnd = Math.max(clusterEnd, e);
-    cluster.push({ a, lane, lanes: 1 });
+    cluster.push({ a, lane, lanes: 1, cluster: clusterId });
   }
   close();
   return out;
+}
+
+/** Splits a column's layout into what is drawn (at most `cap` side-by-side) and, per crowded time block, the full list behind a "+N" button. */
+function visibleLayout(items: CalAppt[], cap: number) {
+  const placed = layout(items);
+  const groups = new Map<number, typeof placed>();
+  for (const p of placed) groups.set(p.cluster, [...(groups.get(p.cluster) ?? []), p]);
+  const drawn = placed.filter(p => p.lane < cap).map(p => ({ ...p, lanes: Math.min(p.lanes, cap) }));
+  const more = [...groups.values()].filter(g => g.some(p => p.lane >= cap)).map(g => ({
+    all: g.map(p => p.a), hidden: g.filter(p => p.lane >= cap).length, top: Math.min(...g.map(p => +new Date(p.a.appointment_at))),
+  }));
+  return { drawn, more };
 }
 
 export function AppointmentCalendar() {
@@ -58,6 +71,7 @@ export function AppointmentCalendar() {
   const [now, setNow] = useState<Date | null>(null);
   const [doctor, setDoctor] = useState("");
   const [selected, setSelected] = useState<CalAppt | null>(null);
+  const [crowd, setCrowd] = useState<CalAppt[] | null>(null);
   const [slot, setSlot] = useState<{ date: string; time: string; provider: string } | null>(null);
 
   // Wall-clock time can't be read during prerender: "today" is set once mounted. Doctors start on their own day.
@@ -158,7 +172,7 @@ export function AppointmentCalendar() {
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-line">
-          <div style={{ minWidth: 56 + columns.length * (view === "day" ? 170 : 120) }}>
+          <div style={{ minWidth: 56 + columns.length * (view === "day" ? 200 : 130) }}>
             <div className="flex border-b border-line bg-subtle">
               <div className="w-14 shrink-0" />
               {columns.map(c => (
@@ -176,19 +190,31 @@ export function AppointmentCalendar() {
                   {ready && sameDay(c.date, today) && today.getHours() >= START_H && today.getHours() < END_H && (
                     <div className="pointer-events-none absolute left-0 right-0 z-10 border-t-2 border-danger" style={{ top: ((today.getHours() * 60 + today.getMinutes() - START_H * 60) / 60) * HOUR_H }} />
                   )}
-                  {layout(c.items).map(({ a, lane, lanes }) => {
-                    const s = new Date(a.appointment_at);
-                    const top = ((s.getHours() * 60 + s.getMinutes() - START_H * 60) / 60) * HOUR_H;
-                    if (top < -HOUR_H || top > (END_H - START_H) * HOUR_H) return null;
+                  {(() => {
+                    const { drawn, more } = visibleLayout(c.items, view === "week" ? 1 : 3);
+                    const yOf = (t: number) => { const d = new Date(t); return ((d.getHours() * 60 + d.getMinutes() - START_H * 60) / 60) * HOUR_H; };
                     return (
-                      <button key={a.appointment_id} type="button" onClick={e => { e.stopPropagation(); setSelected(a); }}
-                        style={{ top: Math.max(top, 0), height: Math.max((a.duration_minutes / 60) * HOUR_H - 2, 22), left: `calc(${(lane / lanes) * 100}% + 2px)`, width: `calc(${100 / lanes}% - 4px)` }}
-                        className={`absolute overflow-hidden rounded-md border-l-4 px-1.5 py-0.5 text-left text-xs leading-tight ${TYPE_STYLE[a.type ?? ""] ?? "border-line-strong bg-hover text-ink-2"} ${a.status === "CANCELLED" ? "opacity-40 line-through" : a.status === "COMPLETED" ? "opacity-70" : ""}`}>
-                        <b className="block truncate">{hhmm(s)} {a.name}</b>
-                        {a.duration_minutes >= 30 && <span className="block truncate opacity-80">{[a.type?.toLowerCase(), view === "week" ? a.provider_name : null].filter(Boolean).join(" · ")}</span>}
-                      </button>
+                      <>
+                        {drawn.map(({ a, lane, lanes }) => {
+                          const s = new Date(a.appointment_at);
+                          const top = yOf(+s);
+                          if (top < -HOUR_H || top > (END_H - START_H) * HOUR_H) return null;
+                          return (
+                            <button key={a.appointment_id} type="button" title={`${hhmm(s)} ${a.name}${a.provider_name ? ` · ${a.provider_name}` : ""}`} onClick={e => { e.stopPropagation(); setSelected(a); }}
+                              style={{ top: Math.max(top, 0), height: Math.max((a.duration_minutes / 60) * HOUR_H - 2, 24), left: `calc(${(lane / lanes) * 100}% + 2px)`, width: `calc(${100 / lanes}% - ${more.length ? 30 : 4}px)` }}
+                              className={`absolute overflow-hidden rounded-md border-l-4 px-1.5 py-0.5 text-left text-xs leading-tight ${TYPE_STYLE[a.type ?? ""] ?? "border-line-strong bg-hover text-ink-2"} ${a.status === "CANCELLED" ? "opacity-40 line-through" : a.status === "COMPLETED" ? "opacity-70" : ""}`}>
+                              <b className="block truncate">{hhmm(s)} {a.name}</b>
+                              {a.duration_minutes >= 30 && <span className="block truncate opacity-80">{[a.type?.toLowerCase(), view === "week" ? a.provider_name : null].filter(Boolean).join(" · ")}</span>}
+                            </button>
+                          );
+                        })}
+                        {more.map(g => (
+                          <button key={g.top} type="button" aria-label={`${g.hidden} more appointments`} onClick={e => { e.stopPropagation(); setCrowd(g.all); }}
+                            style={{ top: Math.max(yOf(g.top), 0) }} className="absolute right-0.5 z-10 rounded-md bg-ink px-1.5 py-0.5 text-[11px] font-semibold text-white shadow-xs hover:bg-ink-2">+{g.hidden}</button>
+                        ))}
+                      </>
                     );
-                  })}
+                  })()}
                 </div>
               ))}
             </div>
@@ -196,6 +222,19 @@ export function AppointmentCalendar() {
         </div>
       )}
 
+      <Modal open={!!crowd} onClose={() => setCrowd(null)} title={crowd ? `${crowd.length} appointments around ${hhmm(new Date(crowd[0].appointment_at))}` : ""} description="Pick one to see its details.">
+        <ul className="m-0 list-none divide-y divide-line p-0">
+          {(crowd ?? []).map(a => (
+            <li key={a.appointment_id}>
+              <button type="button" onClick={() => { setCrowd(null); setSelected(a); }} className="flex w-full items-center gap-3 px-1 py-2.5 text-left hover:bg-subtle">
+                <span className="w-12 shrink-0 text-sm font-semibold text-ink">{hhmm(new Date(a.appointment_at))}</span>
+                <span className="min-w-0 flex-1"><b className="block truncate text-sm">{a.name}</b><span className="block truncate text-xs text-muted">{[a.type?.toLowerCase(), a.provider_name].filter(Boolean).join(" · ")}</span></span>
+                <Pill tone={a.status === "SCHEDULED" ? "green" : a.status === "COMPLETED" ? "gray" : "amber"}>{a.status}</Pill>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </Modal>
       <DetailsModal appt={selected} onClose={() => setSelected(null)} onChanged={() => { setSelected(null); reload(); }} docs={docs} />
       <BookingModal slot={slot} onClose={() => setSlot(null)} onSaved={() => { setSlot(null); reload(); }} docs={docs} />
     </div>
