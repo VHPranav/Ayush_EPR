@@ -135,7 +135,8 @@ CREATE TABLE IF NOT EXISTS discharge_summaries (
 CREATE TABLE IF NOT EXISTS appointments (
   appointment_id uuid PRIMARY KEY DEFAULT gen_random_uuid(), patient_id uuid NOT NULL REFERENCES patients(patient_id) ON DELETE CASCADE,
   appointment_at timestamptz NOT NULL, provider_user uuid REFERENCES users(user_id), type text, reason text,
-  reception_reminder boolean NOT NULL DEFAULT true, status text NOT NULL DEFAULT 'SCHEDULED', created_by uuid REFERENCES users(user_id)
+  reception_reminder boolean NOT NULL DEFAULT true, status text NOT NULL DEFAULT 'SCHEDULED', created_by uuid REFERENCES users(user_id),
+  duration_minutes integer NOT NULL DEFAULT 30
 );
 CREATE INDEX IF NOT EXISTS idx_appointments_at ON appointments(appointment_at,status);
 

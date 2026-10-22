@@ -117,3 +117,8 @@ export interface ManagedUser {
   /** Still using the old unsalted hash (e.g. the seeded dev accounts): the password should be reset. */
   legacy_password: boolean;
 }
+
+export interface CalAppt {
+  appointment_id: string; patient_id: string; appointment_at: string; duration_minutes: number; type: string | null; reason: string | null;
+  status: string; provider_user: string | null; provider_name: string | null; name: string; uhid: string;
+}

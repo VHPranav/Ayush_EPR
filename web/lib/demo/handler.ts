@@ -34,6 +34,7 @@ const READ_PERMS: [RegExp, Perm][] = [
   [/^\/api\/stats\/patients$/, "patients.view"],
   [/^\/api\/billing\/invoices$/, "billing.read"],
   [/^\/api\/providers$/, "appointments.write"],
+  [/^\/api\/appointments$/, "appointments.read"],
   [/^\/api\/pharmacy\/queue$/, "pharmacy.write"],
   [/^\/api\/users$/, "users.manage"],
 ];
@@ -74,6 +75,11 @@ export async function demoRequest<T>(path: string, method: string, body: unknown
     return d.summaries.filter(p => !q || [p.uhid, p.name, p.phone ?? ""].some(v => v.toLowerCase().includes(q))).slice(0, 100) as T;
   }
   if (route === "/api/providers" || route === "/api/pharmacy/queue") return [] as T;
+  if (route === "/api/appointments") {
+    const from = new Date(url.searchParams.get("from") ?? 0).getTime(), to = new Date(url.searchParams.get("to") ?? 0).getTime();
+    return d.followups.filter(a => { const t = new Date(a.appointment_at).getTime(); return t >= from && t < to; })
+      .map((a, i) => ({ ...a, appointment_id: a.appointment_id ?? `demo-${i}`, duration_minutes: 30, status: "SCHEDULED", provider_user: null, provider_name: null })) as T;
+  }
   if (route === "/api/stats/patients") {
     const counts = new Map<string, number>();
     for (const p of d.summaries) {

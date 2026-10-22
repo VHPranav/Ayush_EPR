@@ -241,6 +241,24 @@ ok((await call(tok.AUDITOR, 'GET', '/api/audit?q=rt.reception')).j.every(a => a.
 ok((await call(tok.AUDITOR, 'GET', '/api/audit?from=2999-01-01')).j.length === 0, 'audit date filter');
 ok((await call(tok.AUDITOR, 'GET', '/api/audit?limit=2')).j.length === 2, 'audit limit');
 ok((await call(tok.AUDITOR, 'GET', "/api/audit?q=%25_'")).s === 200, 'audit search is injection-safe');
+// --- calendar: range query, length, clash warning, reschedule
+const docId = (await call(tok.RECEPTION, 'GET', '/api/providers')).j[0].user_id;
+const slotAt = new Date(Date.now() + 3 * 864e5); slotAt.setMinutes(0, 0, 0);
+const book = (at, extra = {}) => call(tok.RECEPTION, 'POST', `/api/patients/${P}/appointments`, { appointmentAt: at.toISOString(), providerUser: docId, durationMinutes: 30, type: 'CONSULTATION', ...extra });
+const first = await book(slotAt); ok(first.s === 201 && first.j.duration_minutes === 30, 'booking stores its length');
+const overlap = await book(new Date(+slotAt + 15 * 60e3)); ok(overlap.s === 409 && overlap.j.clash === true, 'overlapping booking for the same doctor is flagged');
+ok((await book(new Date(+slotAt + 30 * 60e3))).s === 201, 'back-to-back booking is fine');
+ok((await book(new Date(+slotAt + 15 * 60e3), { confirmClash: true })).s === 201, 'clash can be confirmed');
+ok((await call(tok.RECEPTION, 'POST', `/api/patients/${P}/appointments`, { appointmentAt: new Date(+slotAt + 5 * 3600e3).toISOString(), durationMinutes: 3 })).s === 400, 'absurd length rejected');
+const cal = await call(tok.RECEPTION, 'GET', `/api/appointments?from=${encodeURIComponent(new Date(+slotAt - 3600e3).toISOString())}&to=${encodeURIComponent(new Date(+slotAt + 3 * 3600e3).toISOString())}`);
+ok(cal.s === 200 && cal.j.length >= 3 && cal.j[0].name && cal.j[0].duration_minutes, 'calendar range lists appointments with patient and length');
+ok((await call(tok.RECEPTION, 'GET', '/api/appointments?from=bad&to=worse')).s === 400, 'calendar rejects a bad range');
+ok((await call(tok.FINANCE, 'GET', `/api/appointments?from=${new Date().toISOString()}&to=${new Date(Date.now() + 864e5).toISOString()}`)).s === 403, 'finance cannot read the calendar');
+ok((await call(tok.MEDICAL_DIRECTOR, 'GET', `/api/appointments?from=${new Date().toISOString()}&to=${new Date(Date.now() + 864e5).toISOString()}`)).s === 200, 'medical director can read the calendar');
+const mv = await call(tok.RECEPTION, 'PUT', `/api/appointments/${first.j.appointment_id}`, { appointmentAt: new Date(+slotAt + 6 * 3600e3).toISOString() });
+ok(mv.s === 200, 'reschedule works');
+ok((await call(tok.RECEPTION, 'PUT', `/api/appointments/${first.j.appointment_id}`, { appointmentAt: new Date(Date.now() - 864e5).toISOString() })).s === 400, 'cannot reschedule into the past');
+ok((await call(tok.MEDICAL_DIRECTOR, 'PUT', `/api/appointments/${first.j.appointment_id}`, { status: 'CANCELLED' })).s === 403, 'director cannot change appointments');
 // rate limiting (last: it locks the account)
 let code; for (let i = 0; i < 12; i++) code = (await login('rt.finance', 'wrong-password')).s;
 ok(code === 429, 'login throttled after repeated failures, got ' + code);

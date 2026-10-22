@@ -9,6 +9,7 @@ import { useToast } from "@/lib/toast";
 import { useFetch } from "@/lib/use-fetch";
 import type { FollowUp } from "@/lib/types";
 import { Select } from "@/components/ui";
+import { AppointmentCalendar } from "@/components/appointment-calendar";
 import { Button, Card, Empty, Grid, PageHead, PatientBar, SelectField, Table, TextField, Td } from "@/components/ui";
 
 export default function AppointmentsPage() {
@@ -22,6 +23,7 @@ export default function AppointmentsPage() {
   const { data: list, error, reload } = useFetch<FollowUp[]>("/api/reception/followups?days=365");
   const { data: providers } = useFetch<{ user_id: string; display_name: string }[]>(can("appointments.write") ? "/api/providers" : null);
   const [provider, setProvider] = useState("");
+  const [tab, setTab] = useState<"calendar" | "list">("calendar");
   const [booked, setBooked] = useState<{ id: string; text: string } | null>(null);
   const [onlyThis, setOnlyThis] = useState(true);
   const rowRef = useRef<HTMLTableRowElement | null>(null);
@@ -66,7 +68,15 @@ export default function AppointmentsPage() {
 
   return (
     <>
-      <PageHead title="Appointments / Follow-up" subtitle="Book a visit for the open patient, and see who is coming next." />
+      <PageHead title="Appointments" subtitle={tab === "calendar" ? "See each doctor's day and week. Click a free slot to book, or an appointment for details." : "Book a visit for the open patient, and see who is coming next."}
+        actions={
+          <div role="tablist" aria-label="Appointments view" className="flex gap-1 rounded-xl bg-hover p-1">
+            {([["calendar", "Calendar"], ["list", "List"]] as const).map(([k, label]) => (
+              <button key={k} role="tab" aria-selected={tab === k} type="button" onClick={() => setTab(k)} className={`rounded-lg px-4 py-1.5 text-sm font-medium ${tab === k ? "bg-white text-ink shadow-xs" : "text-ink-2 hover:text-ink"}`}>{label}</button>
+            ))}
+          </div>
+        } />
+      {tab === "calendar" ? <Card><AppointmentCalendar /></Card> : <>
       <PatientBar />
       {booked && (
         <div ref={confirmRef} role="status" className="mb-5 rounded-2xl bg-good-soft p-5 text-good">
@@ -123,6 +133,7 @@ export default function AppointmentsPage() {
           </Table>
         ) : <Empty>{onlyThis && patient ? "No upcoming appointments for this patient." : "No upcoming appointments."}</Empty>}
       </Card>
+      </>}
     </>
   );
 }

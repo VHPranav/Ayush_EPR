@@ -52,6 +52,8 @@ app.param('id', (req, res, next, id) => {
 
 const pool = await getDatabasePool();
 await pool.query('INSERT INTO roles(name) SELECT unnest($1::text[]) ON CONFLICT DO NOTHING', [ALL_ROLES]);
+// Small in-place upgrade for databases created before appointments had a length (schema.sql only runs on an empty database).
+await pool.query('ALTER TABLE appointments ADD COLUMN IF NOT EXISTS duration_minutes integer NOT NULL DEFAULT 30');
 
 const sha256 = s => crypto.createHash('sha256').update(s).digest('hex');
 const scryptHash = s => crypto.scryptSync(s, PASSWORD_SALT || 'CHANGE_ME_SALT', 32).toString('hex');
@@ -565,14 +567,31 @@ app.post('/api/patients/:id/discharge-summaries', auth, requirePerm('discharge.w
   res.status(201).json(rows[0]);
 });
 
+// A scheduled appointment for the same doctor that overlaps [start, start+minutes). `ignoreId` excludes the appointment being moved.
+async function findClash(providerId, start, minutes, ignoreId) {
+  const { rows } = await pool.query(
+    `SELECT a.appointment_at, p.name, u.display_name AS provider_name FROM appointments a
+     JOIN patients p ON p.patient_id=a.patient_id LEFT JOIN users u ON u.user_id=a.provider_user
+     WHERE a.provider_user=$1 AND a.status='SCHEDULED' AND ($4::uuid IS NULL OR a.appointment_id<>$4::uuid)
+       AND a.appointment_at < $2::timestamptz + make_interval(mins => $3) AND a.appointment_at + make_interval(mins => a.duration_minutes) > $2::timestamptz
+     LIMIT 1`, [providerId, start.toISOString(), minutes, ignoreId]);
+  return rows[0] || null;
+}
+
 app.post('/api/patients/:id/appointments', auth, requirePerm('appointments.write'), async (req, res) => {
   const b = req.body || {};
   const when = new Date(b.appointmentAt);
   if (!b.appointmentAt || Number.isNaN(when.getTime())) return res.status(400).json({ error: 'Choose a valid date and time' });
   if (when.getTime() < Date.now() - 5 * 60e3) return res.status(400).json({ error: 'The appointment cannot be in the past' });
+  const minutes = b.durationMinutes === undefined ? 30 : Number(b.durationMinutes);
+  if (!Number.isInteger(minutes) || minutes < 5 || minutes > 480) return res.status(400).json({ error: 'Appointment length must be between 5 and 480 minutes' });
+  if (b.providerUser && !b.confirmClash) {
+    const clash = await findClash(b.providerUser, when, minutes, null);
+    if (clash) return res.status(409).json({ error: `${clash.provider_name || 'That doctor'} already has ${clash.name} booked at that time. Book anyway?`, clash: true });
+  }
   const { rows } = await pool.query(
-    'INSERT INTO appointments(patient_id,appointment_at,provider_user,type,reason,reception_reminder,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',
-    [req.params.id, b.appointmentAt, b.providerUser || null, b.type || null, b.reason || null, b.receptionReminder !== false, req.auth.user_id]
+    'INSERT INTO appointments(patient_id,appointment_at,provider_user,type,reason,reception_reminder,created_by,duration_minutes) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
+    [req.params.id, b.appointmentAt, b.providerUser || null, b.type || null, b.reason || null, b.receptionReminder !== false, req.auth.user_id, minutes]
   );
   await audit(req, 'CREATE_APPOINTMENT', 'appointments', rows[0].appointment_id, req.params.id);
   res.status(201).json(rows[0]);
@@ -586,11 +605,29 @@ app.get('/api/providers', auth, requirePerm('appointments.write'), async (_req, 
 });
 
 app.put('/api/appointments/:id', auth, requirePerm('appointments.write'), async (req, res) => {
-  const { status } = req.body || {};
-  if (!['SCHEDULED', 'COMPLETED', 'CANCELLED', 'NO_SHOW'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
-  const { rows } = await pool.query('UPDATE appointments SET status=$1 WHERE appointment_id=$2 RETURNING appointment_id,patient_id,status', [status, req.params.id]);
-  if (!rows[0]) return res.status(404).json({ error: 'Appointment not found' });
-  await audit(req, 'UPDATE_APPOINTMENT', 'appointments', rows[0].appointment_id, rows[0].patient_id);
+  const b = req.body || {};
+  const cur = await pool.query('SELECT * FROM appointments WHERE appointment_id=$1', [req.params.id]);
+  if (!cur.rows[0]) return res.status(404).json({ error: 'Appointment not found' });
+  const a = cur.rows[0];
+  if (b.status !== undefined && !['SCHEDULED', 'COMPLETED', 'CANCELLED', 'NO_SHOW'].includes(b.status)) return res.status(400).json({ error: 'Invalid status' });
+  let when = new Date(a.appointment_at);
+  if (b.appointmentAt !== undefined) {
+    when = new Date(b.appointmentAt);
+    if (Number.isNaN(when.getTime())) return res.status(400).json({ error: 'Choose a valid date and time' });
+    if (when.getTime() < Date.now() - 5 * 60e3) return res.status(400).json({ error: 'The appointment cannot be moved into the past' });
+  }
+  const minutes = b.durationMinutes === undefined ? a.duration_minutes : Number(b.durationMinutes);
+  if (!Number.isInteger(minutes) || minutes < 5 || minutes > 480) return res.status(400).json({ error: 'Appointment length must be between 5 and 480 minutes' });
+  const provider = b.providerUser === undefined ? a.provider_user : (b.providerUser || null);
+  const moved = b.appointmentAt !== undefined || b.providerUser !== undefined || b.durationMinutes !== undefined;
+  if (moved && provider && !b.confirmClash && (b.status ?? a.status) === 'SCHEDULED') {
+    const clash = await findClash(provider, when, minutes, a.appointment_id);
+    if (clash) return res.status(409).json({ error: `${clash.provider_name || 'That doctor'} already has ${clash.name} booked at that time. Book anyway?`, clash: true });
+  }
+  const { rows } = await pool.query(
+    'UPDATE appointments SET status=$1, appointment_at=$2, duration_minutes=$3, provider_user=$4, type=COALESCE($5,type), reason=COALESCE($6,reason) WHERE appointment_id=$7 RETURNING appointment_id,patient_id,status,appointment_at,duration_minutes',
+    [b.status ?? a.status, when.toISOString(), minutes, provider, b.type ?? null, b.reason ?? null, a.appointment_id]);
+  await audit(req, moved ? 'RESCHEDULE_APPOINTMENT' : 'UPDATE_APPOINTMENT', 'appointments', a.appointment_id, a.patient_id, { status: rows[0].status });
   res.json(rows[0]);
 });
 
@@ -617,6 +654,18 @@ app.get('/api/audit', auth, requirePerm('audit.read'), async (req, res) => {
        AND ($4::date IS NULL OR a.event_time >= $4::date) AND ($5::date IS NULL OR a.event_time < $5::date + 1)
      ORDER BY a.event_time DESC, a.audit_id DESC LIMIT $6`,
     [action, q, `%${q.replace(/[\\%_]/g, '\\$&')}%`, day(req.query.from), day(req.query.to), limit]);
+  res.json(rows);
+});
+
+// Every appointment starting in [from, to) for the calendar view (all statuses; the UI fades cancelled ones).
+app.get('/api/appointments', auth, requirePerm('appointments.read'), async (req, res) => {
+  const from = new Date(String(req.query.from || '')), to = new Date(String(req.query.to || ''));
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from || to - from > 100 * 864e5) return res.status(400).json({ error: 'Choose a valid date range (up to 100 days)' });
+  const { rows } = await pool.query(
+    `SELECT a.appointment_id, a.patient_id, a.appointment_at, a.duration_minutes, a.type, a.reason, a.status, a.provider_user,
+            u.display_name AS provider_name, p.name, p.uhid
+     FROM appointments a JOIN patients p ON p.patient_id=a.patient_id LEFT JOIN users u ON u.user_id=a.provider_user
+     WHERE a.appointment_at >= $1 AND a.appointment_at < $2 ORDER BY a.appointment_at LIMIT 1000`, [from.toISOString(), to.toISOString()]);
   res.json(rows);
 });
 
