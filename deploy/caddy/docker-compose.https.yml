@@ -1,0 +1,15 @@
+# HTTPS with automatic certificates:  set DOMAIN in .env, point DNS at this server, then
+#   docker compose -f docker-compose.yml -f deploy/caddy/docker-compose.https.yml up -d --build
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [web]
+    ports: ["80:80", "443:443"]
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+volumes:
+  caddy_data:
