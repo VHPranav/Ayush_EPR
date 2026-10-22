@@ -9,7 +9,7 @@ import { useToast } from "@/lib/toast";
 import { useFetch } from "@/lib/use-fetch";
 import type { Prescription as Rx, StockItem, TreatmentMaster } from "@/lib/types";
 import { printPrescription } from "@/lib/print";
-import { AreaField, Button, Card, Empty, Input, PageHead, Pill, RequirePatient, Select } from "@/components/ui";
+import { AreaField, Button, Card, Empty, Input, PageHead, Pill, RequirePatient, Select, ViewOnly } from "@/components/ui";
 
 const FREQ = ["Once daily", "Twice daily", "Thrice daily", "As required"];
 const DURATION = ["1 day", "3 days", "7 days", "14 days", "21 days", "28 days"];
@@ -83,6 +83,7 @@ function Prescription() {
 
   return (
     <>
+      {!canWrite && <ViewOnly what="prescriptions" />}
       {justSaved && (
         <div role="status" className="mb-5 rounded-2xl bg-good-soft p-5 text-good">
           <div className="font-semibold">Prescription {justSaved.prescription_no} saved</div>

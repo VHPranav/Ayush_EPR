@@ -6,7 +6,7 @@ import { usePatient } from "@/lib/patient";
 import { useToast } from "@/lib/toast";
 import { usePatientData } from "@/lib/use-patient-data";
 import type { TreatmentSession } from "@/lib/types";
-import { AreaField, Button, Card, DataList, Grid, PageHead, Pill, RequirePatient, SelectField, TextField, Field, Select } from "@/components/ui";
+import { AreaField, Button, Card, DataList, Grid, PageHead, Pill, RequirePatient, SelectField, TextField, Field, Select, ViewOnly } from "@/components/ui";
 
 const blank = {
   prescriptionTreatmentId: "", sessionDate: "", startTime: "", endTime: "", status: "COMPLETED", preAssessment: "", procedureNotes: "", materials: "",
@@ -45,6 +45,7 @@ function Sessions() {
 
   return (
     <>
+      {!can("sessions.write") && <ViewOnly what="therapy sessions" />}
       {prescribed.length > 0 && (
         <Card title="Prescribed treatments">
           <ul className="m-0 list-none divide-y divide-line p-0 text-sm">

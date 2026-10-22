@@ -8,13 +8,14 @@ import { useFetch } from "@/lib/use-fetch";
 import { useAuth } from "@/lib/auth";
 import { usePatientData } from "@/lib/use-patient-data";
 import type { Administration, Allergy, CarePlan, ClinicalRecord, Investigation, MedRec, Outcome, Problem, Referral } from "@/lib/types";
-import { Button, Card, DataList, Grid, Input, PageHead, Pill, RequirePatient, Select, Textarea } from "@/components/ui";
+import { Button, Card, DataList, Grid, Input, PageHead, Pill, RequirePatient, Select, Textarea, ViewOnly } from "@/components/ui";
 
 export default function ClinicalPage() {
   return (
     <>
       <PageHead title="Clinical Modules" subtitle="Problems, allergies, medication reconciliation, investigations, outcomes, referrals and integrated care plans." />
       <RequirePatient>
+        <ClinicalViewOnly />
         {/* Single column until there is room for two cards side by side, so inputs stay readable. */}
         <div className="grid grid-cols-1 gap-x-5 xl:grid-cols-2 xl:items-start"><VitalsCard /><AdministrationCard /></div>
         <div className="grid grid-cols-1 gap-x-5 xl:grid-cols-2 xl:items-start"><ProblemsCard /><AllergiesCard /></div>
@@ -24,6 +25,11 @@ export default function ClinicalPage() {
       </RequirePatient>
     </>
   );
+}
+
+function ClinicalViewOnly() {
+  const { can } = useAuth();
+  return can("clinical.write") || can("chart.write") || can("allergies.write") ? null : <ViewOnly what="these records" />;
 }
 
 const Item = ({ children }: { children: ReactNode }) => <p className="my-2">{children}</p>;

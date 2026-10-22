@@ -174,6 +174,15 @@ export function PatientBar() {
   );
 }
 
+/** Shown on a patient page the signed-in role may read but not change, so a missing form or greyed-out fields is explained. */
+export function ViewOnly({ what }: { what?: string }) {
+  return (
+    <div role="note" className="mb-5 rounded-xl bg-subtle px-4 py-3 text-sm text-ink-2">
+      <b className="text-ink">View only.</b> Your role can read {what ?? "this page"} but cannot change anything here.
+    </div>
+  );
+}
+
 /** Wraps pages that need an open patient; replaces the old "Open a patient first" toast. */
 export function RequirePatient({ children }: { children: ReactNode }) {
   const { patient } = usePatient();

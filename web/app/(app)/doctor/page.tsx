@@ -6,7 +6,7 @@ import { errMsg, fmtDateTime } from "@/lib/format";
 import { usePatient } from "@/lib/patient";
 import { useToast } from "@/lib/toast";
 import type { ClinicalPayload, ClinicalRecord, Patient } from "@/lib/types";
-import { AreaField, Button, Card, Empty, Grid, PageHead, Pill, RequirePatient, SelectField, TextField } from "@/components/ui";
+import { AreaField, Button, Card, Empty, Grid, PageHead, Pill, RequirePatient, SelectField, TextField, ViewOnly } from "@/components/ui";
 
 const PRAKRITI = ["Vata", "Pitta", "Kapha", "Vata-Pitta", "Pitta-Kapha", "Vata-Kapha", "Tridoshic"];
 const AGNI = ["Sama", "Manda", "Tikshna", "Vishama"];
@@ -108,6 +108,7 @@ function AssessmentForm({ latest, nurseVitals, patient }: { latest?: ClinicalRec
 
   return (
     <fieldset disabled={!canWrite} className="m-0 min-w-0 border-0 p-0">
+      {!canWrite && <ViewOnly what="the clinical record" />}
       <Card title="Modern Clinical Assessment">
         <Grid cols={3}>
           <AreaField label="Chief complaints" value={f.cc} onChange={set("cc")} />

@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { usePatientData } from "@/lib/use-patient-data";
 import type { Discharge } from "@/lib/types";
-import { AreaField, Button, Card, DataList, PageHead, RequirePatient } from "@/components/ui";
+import { AreaField, Button, Card, DataList, PageHead, RequirePatient, ViewOnly } from "@/components/ui";
 
 const blank = {
   admissionSummary: "", diagnoses: "", procedures: "", medicines: "", treatmentCourse: "",
@@ -33,6 +33,7 @@ function DischargeForm() {
   }
   return (
     <>
+      {!can("discharge.write") && <ViewOnly what="discharge summaries" />}
       {can("discharge.write") && (
       <Card>
         {FIELDS.map(([k, label]) => <AreaField key={k} label={label} value={f[k]} onChange={v => setF(s => ({ ...s, [k]: v }))} />)}
