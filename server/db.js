@@ -46,6 +46,7 @@ export async function getDatabasePool() {
   if (isReachable) {
     console.log('✓ Connected to PostgreSQL on', defaultDbUrl.replace(/:[^:@]+@/, ':****@'));
     activePool = new Pool({ connectionString: defaultDbUrl });
+    activePool.on('error', err => console.error('Idle database client error:', err.message));
     
     // Check if schema is initialized
     try {
@@ -64,12 +65,13 @@ export async function getDatabasePool() {
   console.log('No active PostgreSQL found on port 5432. Starting native embedded PostgreSQL...');
   
   const { default: EmbeddedPostgres } = await import('embedded-postgres');
-  const pgDir = path.join(__dirname, '..', 'db', '.pgdata');
-  fs.mkdirSync(path.join(__dirname, '..', 'db'), { recursive: true });
+  const pgDir = process.env.PGDATA_DIR || path.join(__dirname, '..', 'db', '.pgdata');
+  fs.mkdirSync(path.dirname(pgDir), { recursive: true });
 
   const port = Number(process.env.PGPORT || 5432);
   const user = process.env.POSTGRES_USER || 'ayush';
   const password = process.env.POSTGRES_PASSWORD || 'ayush_dev_password';
+  if (process.env.NODE_ENV === 'production') throw new Error('Refusing to start the embedded development database in production: set DATABASE_URL to a PostgreSQL server.');
 
   embeddedPostgresInstance = new EmbeddedPostgres({
     port,
@@ -102,35 +104,24 @@ export async function getDatabasePool() {
 
   const connString = `postgresql://${user}:${encodeURIComponent(password)}@127.0.0.1:${port}/ayush_epr`;
   activePool = new Pool({ connectionString: connString });
+  activePool.on('error', err => console.error('Idle database client error:', err.message));
 
   const tableCheck = await activePool.query("SELECT 1 FROM information_schema.tables WHERE table_name = 'users'");
   if (tableCheck.rows.length === 0) {
-    console.log('Deploying initial schema & demo accounts...');
+    console.log('Deploying initial schema...');
     await runSchema(activePool);
   }
 
   console.log('✓ Embedded PostgreSQL is ready and active.');
 
-  const shutdown = async () => {
-    if (activePool) {
-      try { await activePool.end(); } catch {}
-    }
-    if (embeddedPostgresInstance) {
-      try {
-        console.log('\nStopping embedded PostgreSQL...');
-        await embeddedPostgresInstance.stop();
-      } catch {}
-    }
-  };
-
-  process.on('SIGINT', async () => {
-    await shutdown();
-    process.exit(0);
-  });
-  process.on('SIGTERM', async () => {
-    await shutdown();
-    process.exit(0);
-  });
-
   return activePool;
+}
+
+/** Close the pool and, when this process started it, the embedded PostgreSQL. */
+export async function closeDatabase() {
+  if (activePool) { try { await activePool.end(); } catch {} }
+  if (embeddedPostgresInstance) {
+    console.log('Stopping embedded PostgreSQL...');
+    try { await embeddedPostgresInstance.stop(); } catch {}
+  }
 }

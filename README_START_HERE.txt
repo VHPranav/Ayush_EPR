@@ -3,7 +3,9 @@ AYUSH EPR FULL v7 — CENTRAL DATABASE + PRODUCTION HARDENING FOUNDATION
 FIRST RUN
 1. Install Docker Desktop using INSTALL_PREREQUISITES.bat.
 2. Copy .env.example to .env (START does this automatically).
-3. Edit .env and replace every CHANGE_ME value with long random secrets.
+3. Edit .env and replace every CHANGE_ME value with long random secrets, including ADMIN_USERNAME / ADMIN_PASSWORD
+   (the first Super Administrator, created on the first start only; delete ADMIN_PASSWORD from .env afterwards).
+   The server refuses to start in production without a real PASSWORD_SALT, and with no admin on an empty database.
 4. Run START_AYUSH_EPR.bat.
 5. Open http://localhost:3000 (the Next.js app; the API container is not exposed to the host).
 
@@ -42,9 +44,10 @@ Run BACKUP_AYUSH_EPR.bat regularly. Test RESTORE_AYUSH_EPR.bat on a separate tes
 SECURITY
 Read SECURITY_CHECKLIST.md before any real patient use. HTTPS/TLS should be provided by a properly configured reverse proxy. Do not expose PostgreSQL directly to the internet.
 
-DEVELOPMENT LOGIN
-reception / ayush
-doctor / ayush
-pharmacist / ayush
-admin / ayush
-These credentials must be changed before production use.
+DEVELOPMENT LOGIN (npm run dev / START_AYUSH_EPR.sh only, never in Docker/production)
+On an empty database the API creates reception, doctor, pharmacist and admin, all with the password "ayush-dev-only".
+In production (NODE_ENV=production, as in docker-compose) nothing is seeded and old unsalted passwords are refused.
+
+TESTING
+npm --prefix server test       permission matrix unit tests
+npm --prefix server run smoke  end-to-end check of all 15 roles against a running API on a throwaway database (see the file header)

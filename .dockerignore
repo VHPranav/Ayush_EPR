@@ -1,0 +1,9 @@
+**/node_modules
+**/.next
+**/out-demo
+.git
+.env*
+DEV_CREDENTIALS.local.txt
+db/.pgdata
+server/storage
+backups

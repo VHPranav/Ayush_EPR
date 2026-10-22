@@ -18,3 +18,4 @@ server/storage/*
 # misc
 .DS_Store
 *.log
+backups/

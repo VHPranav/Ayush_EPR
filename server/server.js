@@ -5,11 +5,21 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import multer from 'multer';
-import { getDatabasePool } from './db.js';
+import { closeDatabase, getDatabasePool } from './db.js';
 import { ALL_ROLES, permissionsFor, requirePerm } from './permissions.js';
+import { bootstrapAccounts } from './bootstrap.js';
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
+const IS_PROD = process.env.NODE_ENV === 'production';
+const PASSWORD_SALT = process.env.PASSWORD_SALT || '';
+if (IS_PROD && (PASSWORD_SALT.length < 16 || PASSWORD_SALT.includes('CHANGE_ME'))) {
+  console.error('Refusing to start: set PASSWORD_SALT to a long random value (16+ characters) in .env.');
+  process.exit(1);
+}
+// Number of reverse proxies in front of the API (the Next.js server counts as one), so req.ip is the real client.
+app.set('trust proxy', Number(process.env.TRUST_PROXY || 0));
+app.disable('x-powered-by');
 const SESSION_HOURS = Number(process.env.SESSION_HOURS || 8);
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 20);
 const STORAGE_DIR = process.env.STORAGE_DIR || path.join(path.dirname(fileURLToPath(import.meta.url)), 'storage');
@@ -19,21 +29,43 @@ const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, STORAGE_DIR),
   filename: (_req, file, cb) => cb(null, crypto.randomUUID() + path.extname(file.originalname).toLowerCase())
 });
-const upload = multer({ storage, limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 } });
+const ALLOWED_UPLOADS = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.txt', '.csv', '.doc', '.docx', '.xls', '.xlsx']);
+const upload = multer({
+  storage,
+  limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) =>
+    ALLOWED_UPLOADS.has(path.extname(file.originalname).toLowerCase()) ? cb(null, true) : cb(Object.assign(new Error('That file type is not allowed'), { status: 400 })),
+});
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: '4mb' }));
+// API responses carry patient data: never let a browser or proxy cache them.
+app.use('/api', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UHID_RE = /^AY-\d{4}-\d{5,}$/;
+// Every :id in a route is a UUID (a patient may also be looked up by UHID); reject anything else before it reaches SQL.
+app.param('id', (req, res, next, id) => {
+  if (UUID_RE.test(id) || (UHID_RE.test(id) && req.method === 'GET' && req.route?.path === '/api/patients/:id')) return next();
+  res.status(404).json({ error: 'Not found' });
+});
 
 const pool = await getDatabasePool();
 await pool.query('INSERT INTO roles(name) SELECT unnest($1::text[]) ON CONFLICT DO NOTHING', [ALL_ROLES]);
 
 const sha256 = s => crypto.createHash('sha256').update(s).digest('hex');
-const scryptHash = s => crypto.scryptSync(s, process.env.PASSWORD_SALT || 'CHANGE_ME_SALT', 32).toString('hex');
+const scryptHash = s => crypto.scryptSync(s, PASSWORD_SALT || 'CHANGE_ME_SALT', 32).toString('hex');
+const safeEqual = (a, b) => {
+  const x = Buffer.from(String(a)), y = Buffer.from(String(b));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+};
+// Accounts still on the old unsalted SHA-256 format are refused in production (reset their password first).
 const passwordMatches = (password, stored) =>
   stored?.startsWith('scrypt$')
-    ? crypto.timingSafeEqual(Buffer.from(stored.slice(7), 'hex'), Buffer.from(scryptHash(password), 'hex'))
-    : sha256(password) === stored;
+    ? safeEqual(stored.slice(7), scryptHash(password))
+    : !IS_PROD && !!stored && safeEqual(sha256(password), stored);
 const securePassword = s => 'scrypt$' + scryptHash(s);
+await bootstrapAccounts(pool, { isProd: IS_PROD, hash: securePassword, minPassword: 12 });
 const token = () => crypto.randomBytes(32).toString('hex');
 
 const audit = async (c, optsOrAction, ...rest) => {
@@ -84,7 +116,7 @@ app.get('/api/health', async (_req, res) => {
 });
 
 async function auth(req, res, next) {
-  const raw = req.get('authorization')?.replace(/^Bearer\s+/i, '') || req.cookies?.ayush_session;
+  const raw = req.get('authorization')?.replace(/^Bearer\s+/i, '');
   if (!raw) return res.status(401).json({ error: 'Authentication required' });
   const { rows } = await pool.query(
     `SELECT s.session_id,s.user_id,u.username,u.display_name,array_agg(r.name) roles
@@ -102,9 +134,29 @@ async function auth(req, res, next) {
   next();
 }
 
+// Failed-login throttle: 10 failures per account+IP and 40 per IP in 15 minutes, in memory (resets on restart).
+const FAIL_WINDOW_MS = 15 * 60e3;
+const failures = new Map();
+const failKeys = (req, username) => [`u:${req.ip}:${username.toLowerCase()}`, `i:${req.ip}`];
+const failLimits = [10, 40];
+function throttled(keys) {
+  const now = Date.now();
+  return keys.some((k, i) => (failures.get(k) || []).filter(t => now - t < FAIL_WINDOW_MS).length >= failLimits[i]);
+}
+function recordFailure(keys) {
+  const now = Date.now();
+  for (const k of keys) failures.set(k, [...(failures.get(k) || []).filter(t => now - t < FAIL_WINDOW_MS), now]);
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of failures) if (!v.some(t => now - t < FAIL_WINDOW_MS)) failures.delete(k);
+}, 5 * 60e3).unref();
+
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body || {};
-  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) return res.status(400).json({ error: 'Username and password required' });
+  const keys = failKeys(req, username);
+  if (throttled(keys)) return res.status(429).json({ error: 'Too many failed sign-in attempts. Try again in 15 minutes.' });
   const c = await pool.connect();
   try {
     const { rows } = await c.query(
@@ -119,7 +171,8 @@ app.post('/api/auth/login', async (req, res) => {
     const u = rows[0];
     const ok = u && passwordMatches(password, u.password_hash);
     await audit(c, { action: ok ? 'LOGIN_SUCCESS' : 'LOGIN_FAILURE', tableName: 'users', recordId: u?.user_id || null, req, details: { username } });
-    if (!ok || !u.active) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!ok || !u.active) { recordFailure(keys); return res.status(401).json({ error: 'Invalid credentials' }); }
+    failures.delete(keys[0]);
 
     const raw = token();
     const exp = new Date(Date.now() + SESSION_HOURS * 3600e3);
@@ -149,12 +202,13 @@ app.get('/api/me', auth, (req, res) => res.json({ id: req.auth.user_id, username
 
 app.post('/api/auth/change-password', auth, async (req, res) => {
   const { currentPassword, newPassword } = req.body || {};
-  if (!currentPassword || !newPassword || newPassword.length < 12)
+  if (typeof currentPassword !== 'string' || typeof newPassword !== 'string' || newPassword.length < 12)
     return res.status(400).json({ error: 'New password must be at least 12 characters' });
   const r = await pool.query('SELECT password_hash FROM users WHERE user_id=$1', [req.auth.user_id]);
   if (!r.rows[0] || !passwordMatches(currentPassword, r.rows[0].password_hash))
     return res.status(401).json({ error: 'Current password is incorrect' });
   await pool.query('UPDATE users SET password_hash=$1 WHERE user_id=$2', [securePassword(newPassword), req.auth.user_id]);
+  await pool.query('UPDATE sessions SET logout_at=now() WHERE user_id=$1 AND logout_at IS NULL AND session_id<>$2', [req.auth.user_id, req.auth.session_id]);
   await audit(pool, { userId: req.auth.user_id, sessionId: req.auth.session_id, action: 'PASSWORD_CHANGED', tableName: 'users', recordId: req.auth.user_id, req });
   res.json({ ok: true });
 });
@@ -272,16 +326,18 @@ app.post('/api/patients', auth, requirePerm('patients.register'), async (req, re
   try {
     await c.query('BEGIN');
     const b = req.body || {};
+    if (typeof b.name !== 'string' || !b.name.trim()) { await c.query('ROLLBACK'); return res.status(400).json({ error: 'Patient name is required' }); }
     const { rows } = await c.query(
       `INSERT INTO patients(name,dob,sex,phone,email,nationality,blood_group,insurance,emergency_contact,referral,primary_physician,address,registration_user)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
-      [b.name, b.dob || null, b.sex || null, b.phone || null, b.email || null, b.nationality || null, b.blood || null, b.insurance || null, b.emergency || null, b.referral || null, b.physician || null, b.address || null, req.auth.user_id]
+      [b.name.trim(), b.dob || null, b.sex || null, b.phone || null, b.email || null, b.nationality || null, b.blood || null, b.insurance || null, b.emergency || null, b.referral || null, b.physician || null, b.address || null, req.auth.user_id]
     );
     await audit(c, { userId: req.auth.user_id, sessionId: req.auth.session_id, action: 'CREATE_PATIENT', tableName: 'patients', recordId: rows[0].patient_id, req, details: { uhid: rows[0].uhid } });
     await c.query('COMMIT');
     res.status(201).json(rows[0]);
   } catch (e) {
     await c.query('ROLLBACK');
+    console.error('Patient registration failed:', e.message);
     res.status(400).json({ error: e.code === '23505' ? 'Patient identifier conflict; please retry.' : 'Patient registration failed' });
   } finally {
     c.release();
@@ -289,12 +345,12 @@ app.post('/api/patients', auth, requirePerm('patients.register'), async (req, re
 });
 
 app.get('/api/patients', auth, requirePerm('patients.view'), async (req, res) => {
-  const q = (req.query.q || '').trim();
+  const q = String(req.query.q || '').trim().slice(0, 100);
   const { rows } = await pool.query(
     `SELECT patient_id,uhid,name,dob,sex,phone,registered_at FROM patients
      WHERE archived_at IS NULL AND ($1='' OR uhid ILIKE $2 OR name ILIKE $2 OR phone ILIKE $2)
      ORDER BY registered_at DESC LIMIT 100`,
-    [q, `%${q}%`]
+    [q, `%${q.replace(/[\\%_]/g, '\\$&')}%`]
   );
   res.json(rows);
 });
@@ -324,10 +380,10 @@ app.get('/api/patients/:id', auth, requirePerm('patients.view'), async (req, res
 
 app.post('/api/patients/:id/clinical-records', auth, requirePerm('clinical.write'), async (req, res) => {
   const { section, payload, encounterId = null, amendedFrom = null } = req.body || {};
-  if (!section || payload === undefined) return res.status(400).json({ error: 'section and payload required' });
+  if (typeof section !== 'string' || !section || payload === undefined) return res.status(400).json({ error: 'section and payload required' });
   const { rows } = await pool.query(
     'INSERT INTO clinical_records(patient_id,encounter_id,section,payload,authored_by,amended_from) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',
-    [req.params.id, encounterId, section, payload, req.auth.user_id, amendedFrom]
+    [req.params.id, encounterId, section, J(payload), req.auth.user_id, amendedFrom]
   );
   if (section === 'NOTE') {
     try {
@@ -341,28 +397,42 @@ app.post('/api/patients/:id/clinical-records', auth, requirePerm('clinical.write
   res.status(201).json(rows[0]);
 });
 
+const nonNeg = v => v === undefined || v === null || v === '' || (Number.isFinite(Number(v)) && Number(v) >= 0);
+// jsonb parameters must be sent as JSON text: node-pg would turn a JS array into a Postgres array literal and a bare string is not JSON.
+const J = v => JSON.stringify(v ?? null);
+const hasText = v => typeof v === 'string' && !!v.trim();
+const needText = (res, v, label) => hasText(v) ? false : (res.status(400).json({ error: `${label} is required` }), true);
+
 app.post('/api/pharmacy/stock', auth, requirePerm('pharmacy.write'), async (req, res) => {
   const b = req.body || {};
+  if (needText(res, b.medicineName, 'Medicine name')) return;
+  if (![b.quantity, b.reorderLevel, b.purchasePrice].every(nonNeg)) return res.status(400).json({ error: 'Quantity, reorder level and price cannot be negative' });
   const { rows } = await pool.query(
     `INSERT INTO pharmacy_stock(medicine_id,medicine_name,form,strength,batch_no,expiry_date,quantity,unit,reorder_level,supplier,purchase_price,location)
      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
     [b.medicineId || null, b.medicineName, b.form || null, b.strength || null, b.batchNo || null, b.expiryDate || null, b.quantity || 0, b.unit || null, b.reorderLevel || 0, b.supplier || null, b.purchasePrice || null, b.location || null]
   );
+  await audit(req, 'CREATE_STOCK', 'pharmacy_stock', rows[0].stock_id);
   res.status(201).json(rows[0]);
 });
 
 app.put('/api/pharmacy/stock/:id', auth, requirePerm('pharmacy.write'), async (req, res) => {
   const b = req.body || {};
+  if (needText(res, b.medicineName, 'Medicine name')) return;
+  if (![b.quantity, b.reorderLevel, b.purchasePrice].every(nonNeg)) return res.status(400).json({ error: 'Quantity, reorder level and price cannot be negative' });
   const { rows } = await pool.query(
     `UPDATE pharmacy_stock SET medicine_name=$1,form=$2,strength=$3,batch_no=$4,expiry_date=$5,quantity=$6,unit=$7,reorder_level=$8,supplier=$9,purchase_price=$10,location=$11,updated_at=now() WHERE stock_id=$12 RETURNING *`,
     [b.medicineName, b.form || null, b.strength || null, b.batchNo || null, b.expiryDate || null, b.quantity || 0, b.unit || null, b.reorderLevel || 0, b.supplier || null, b.purchasePrice || null, b.location || null, req.params.id]
   );
   if (!rows[0]) return res.status(404).json({ error: 'Stock item not found' });
+  await audit(req, 'UPDATE_STOCK', 'pharmacy_stock', rows[0].stock_id);
   res.json(rows[0]);
 });
 
 app.delete('/api/pharmacy/stock/:id', auth, requirePerm('pharmacy.write'), async (req, res) => {
-  await pool.query('UPDATE pharmacy_stock SET active=false,updated_at=now() WHERE stock_id=$1', [req.params.id]);
+  const r = await pool.query('UPDATE pharmacy_stock SET active=false,updated_at=now() WHERE stock_id=$1 AND active', [req.params.id]);
+  if (!r.rowCount) return res.status(404).json({ error: 'Stock item not found' });
+  await audit(req, 'DELETE_STOCK', 'pharmacy_stock', req.params.id);
   res.json({ ok: true });
 });
 
@@ -373,25 +443,31 @@ app.get('/api/pharmacy/stock', auth, requirePerm('pharmacy.read'), async (_req, 
 
 app.post('/api/treatment-master', auth, requirePerm('treatments.write'), async (req, res) => {
   const b = req.body || {};
+  if (needText(res, b.name, 'Treatment name')) return;
   const { rows } = await pool.query(
     'INSERT INTO treatment_master(name,category,default_frequency,default_duration,practitioner,instructions,precautions) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',
     [b.name, b.category || null, b.frequency || null, b.duration || null, b.practitioner || null, b.instructions || null, b.precautions || null]
   );
+  await audit(req, 'CREATE_TREATMENT', 'treatment_master', rows[0].treatment_id);
   res.status(201).json(rows[0]);
 });
 
 app.put('/api/treatment-master/:id', auth, requirePerm('treatments.write'), async (req, res) => {
   const b = req.body || {};
+  if (needText(res, b.name, 'Treatment name')) return;
   const { rows } = await pool.query(
     'UPDATE treatment_master SET name=$1,category=$2,default_frequency=$3,default_duration=$4,practitioner=$5,instructions=$6,precautions=$7 WHERE treatment_id=$8 RETURNING *',
     [b.name, b.category || null, b.frequency || null, b.duration || null, b.practitioner || null, b.instructions || null, b.precautions || null, req.params.id]
   );
   if (!rows[0]) return res.status(404).json({ error: 'Treatment not found' });
+  await audit(req, 'UPDATE_TREATMENT', 'treatment_master', rows[0].treatment_id);
   res.json(rows[0]);
 });
 
 app.delete('/api/treatment-master/:id', auth, requirePerm('treatments.delete'), async (req, res) => {
-  await pool.query('UPDATE treatment_master SET active=false WHERE treatment_id=$1', [req.params.id]);
+  const r = await pool.query('UPDATE treatment_master SET active=false WHERE treatment_id=$1 AND active', [req.params.id]);
+  if (!r.rowCount) return res.status(404).json({ error: 'Treatment not found' });
+  await audit(req, 'DELETE_TREATMENT', 'treatment_master', req.params.id);
   res.json({ ok: true });
 });
 
@@ -405,6 +481,7 @@ app.post('/api/patients/:id/prescriptions', auth, requirePerm('prescriptions.wri
   try {
     await c.query('BEGIN');
     const b = req.body || {};
+    if (!(b.treatments?.length || b.medicines?.length)) { await c.query('ROLLBACK'); return res.status(400).json({ error: 'Add at least one treatment or medicine' }); }
     const p = await c.query('INSERT INTO prescriptions(patient_id,prescriber_user,status,notes) VALUES($1,$2,$3,$4) RETURNING *', [req.params.id, req.auth.user_id, b.status || 'ISSUED', b.notes || null]);
     const rx = p.rows[0];
     for (const [i, t] of (b.treatments || []).entries()) {
@@ -424,7 +501,8 @@ app.post('/api/patients/:id/prescriptions', auth, requirePerm('prescriptions.wri
     res.status(201).json(rx);
   } catch (e) {
     await c.query('ROLLBACK');
-    res.status(400).json({ error: 'Prescription could not be saved: ' + e.message });
+    console.error('Prescription failed:', e.message);
+    res.status(e.code === '23503' ? 404 : 400).json({ error: e.code === '23503' ? 'Patient not found' : 'Prescription could not be saved' });
   } finally {
     c.release();
   }
@@ -436,6 +514,7 @@ app.post('/api/patients/:id/letters', auth, requirePerm('discharge.write'), asyn
     'INSERT INTO letters(patient_id,letter_type,recipient,subject,body,authored_by,author_id) VALUES($1,$2,$3,$4,$5,$6,$6) RETURNING *',
     [req.params.id, b.type, b.recipient, b.subject, b.body, req.auth.user_id]
   );
+  await audit(req, 'CREATE_LETTER', 'letters', rows[0].letter_id, req.params.id);
   res.status(201).json(rows[0]);
 });
 
@@ -443,9 +522,10 @@ app.post('/api/patients/:id/discharge-summaries', auth, requirePerm('discharge.w
   const b = req.body || {};
   const { rows } = await pool.query(
     `INSERT INTO discharge_summaries(patient_id,admission_date,discharge_date,attending_provider,discharge_status,reason,final_diagnosis,clinical_course,procedures,discharge_medicines,diet_lifestyle,followup_plan,warning_signs,remarks,authored_by,author_id)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15) RETURNING *`,
+     VALUES($1,$2,COALESCE($3,CURRENT_DATE),$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15) RETURNING *`,
     [req.params.id, b.admissionDate || null, b.dischargeDate || null, b.attendingProvider, b.status, b.reason, b.finalDiagnosis, b.clinicalCourse, b.procedures, b.dischargeMedicines, b.dietLifestyle, b.followupPlan, b.warningSigns, b.remarks, req.auth.user_id]
   );
+  await audit(req, 'CREATE_DISCHARGE', 'discharge_summaries', rows[0].discharge_id, req.params.id);
   res.status(201).json(rows[0]);
 });
 
@@ -455,6 +535,7 @@ app.post('/api/patients/:id/appointments', auth, requirePerm('appointments.write
     'INSERT INTO appointments(patient_id,appointment_at,provider_user,type,reason,reception_reminder,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',
     [req.params.id, b.appointmentAt, b.providerUser || null, b.type || null, b.reason || null, b.receptionReminder !== false, req.auth.user_id]
   );
+  await audit(req, 'CREATE_APPOINTMENT', 'appointments', rows[0].appointment_id, req.params.id);
   res.status(201).json(rows[0]);
 });
 
@@ -478,7 +559,7 @@ app.get('/api/reception/followups', auth, requirePerm('appointments.read'), asyn
 // ---- Full EPR module APIs ----
 app.get('/api/patients/:id/timeline', auth, requirePerm('clinical.read'), async (req, res) => {
   const id = req.params.id;
-  try {
+  {
     const r = await pool.query(
       `SELECT * FROM (
         SELECT started_at AS event_time,'ENCOUNTER' AS event_type, encounter_id::text AS event_id, status AS title, '' AS detail FROM encounters WHERE patient_id=$1
@@ -493,8 +574,6 @@ app.get('/api/patients/:id/timeline', auth, requirePerm('clinical.read'), async 
     );
     await audit(req, 'VIEW_TIMELINE', 'patients', id, id);
     res.json(r.rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
   }
 });
 
@@ -565,7 +644,7 @@ app.post('/api/patients/:id/investigations', auth, requirePerm('chart.write'), a
   const b = req.body || {};
   const r = await pool.query(
     `INSERT INTO investigations(patient_id,encounter_id,investigation_type,test_name,requested_date,result_date,result_summary,result_data,abnormal_flag,ordered_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-    [req.params.id, b.encounterId || null, b.type || null, b.testName, b.requestedDate || null, b.resultDate || null, b.summary || null, b.data || null, b.abnormal || false, req.auth.user_id]
+    [req.params.id, b.encounterId || null, b.type || null, b.testName, b.requestedDate || null, b.resultDate || null, b.summary || null, b.data == null ? null : J(b.data), b.abnormal || false, req.auth.user_id]
   );
   res.status(201).json(r.rows[0]);
 });
@@ -582,7 +661,7 @@ app.post('/api/patients/:id/exams', auth, requirePerm('chart.write'), async (req
   const b = req.body || {};
   const r = await pool.query(
     `INSERT INTO exam_results(patient_id,encounter_id,template_id,findings,examiner_id) VALUES($1,$2,$3,$4,$5) RETURNING *`,
-    [req.params.id, b.encounterId || null, b.templateId || null, b.findings || {}, req.auth.user_id]
+    [req.params.id, b.encounterId || null, b.templateId || null, J(b.findings ?? {}), req.auth.user_id]
   );
   res.status(201).json(r.rows[0]);
 });
@@ -596,7 +675,7 @@ app.post('/api/exam-templates', auth, requirePerm('templates.write'), async (req
   const b = req.body || {};
   const r = await pool.query(
     'INSERT INTO exam_templates(name,specialty,fields) VALUES($1,$2,$3) RETURNING *',
-    [b.name, b.specialty || null, b.fields || []]
+    [b.name, b.specialty || null, J(b.fields ?? [])]
   );
   res.status(201).json(r.rows[0]);
 });
@@ -624,7 +703,7 @@ app.post('/api/patients/:id/care-plans', auth, requirePerm('chart.write'), async
   const b = req.body || {};
   const r = await pool.query(
     `INSERT INTO care_plans(patient_id,encounter_id,plan_type,goals,interventions,monitoring,review_date,status,author_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-    [req.params.id, b.encounterId || null, b.planType || 'INTEGRATED', b.goals || [], b.interventions || [], b.monitoring || [], b.reviewDate || null, b.status || 'ACTIVE', req.auth.user_id]
+    [req.params.id, b.encounterId || null, b.planType || 'INTEGRATED', J(b.goals ?? []), J(b.interventions ?? []), J(b.monitoring ?? []), b.reviewDate || null, b.status || 'ACTIVE', req.auth.user_id]
   );
   res.status(201).json(r.rows[0]);
 });
@@ -666,8 +745,9 @@ app.post('/api/patients/:id/discharge', auth, requirePerm('discharge.write'), as
   const b = req.body || {};
   const r = await pool.query(
     `INSERT INTO discharge_summaries(patient_id,encounter_id,author_id,authored_by,admission_summary,diagnoses,procedures_data,medicines,treatment_course,condition_at_discharge,followup_plan,warnings,signed_at) VALUES($1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10,$11,now()) RETURNING *`,
-    [req.params.id, b.encounterId || null, req.auth.user_id, b.admissionSummary || null, b.diagnoses || [], b.procedures || [], b.medicines || [], b.treatmentCourse || null, b.conditionAtDischarge || null, b.followupPlan || null, b.warnings || null]
+    [req.params.id, b.encounterId || null, req.auth.user_id, b.admissionSummary || null, J(b.diagnoses ?? []), J(b.procedures ?? []), J(b.medicines ?? []), b.treatmentCourse || null, b.conditionAtDischarge || null, b.followupPlan || null, b.warnings || null]
   );
+  await audit(req, 'CREATE_DISCHARGE', 'discharge_summaries', r.rows[0].discharge_id, req.params.id);
   res.status(201).json(r.rows[0]);
 });
 
@@ -681,8 +761,11 @@ app.post('/api/patients/:id/billing', auth, requirePerm('billing.write'), async 
   const b = req.body || {}, c = await pool.connect();
   try {
     await c.query('BEGIN');
-    const inv = 'INV-' + Date.now();
-    const items = b.items || [];
+    const inv = 'INV-' + Date.now() + '-' + crypto.randomBytes(2).toString('hex').toUpperCase();
+    const items = Array.isArray(b.items) ? b.items : [];
+    if (!items.length || items.some(i => !hasText(i?.description) || !nonNeg(i.quantity) || !nonNeg(i.unitPrice)))
+      { await c.query('ROLLBACK'); return res.status(400).json({ error: 'Each invoice line needs a description and non-negative quantity and price' }); }
+    if (!nonNeg(b.discount) || !nonNeg(b.tax)) { await c.query('ROLLBACK'); return res.status(400).json({ error: 'Discount and tax cannot be negative' }); }
     const total = items.reduce((x, i) => x + Number(i.quantity || 1) * Number(i.unitPrice || 0), 0);
     const a = await c.query(
       `INSERT INTO billing_accounts(patient_id,payer_type,invoice_number,status,subtotal,discount,tax,total,notes,created_by) VALUES($1,$2,$3,'OPEN',$4,$5,$6,$7,$8,$9) RETURNING *`,
@@ -694,11 +777,13 @@ app.post('/api/patients/:id/billing', auth, requirePerm('billing.write'), async 
         [a.rows[0].id, i.description, i.category || null, Number(i.quantity || 1), Number(i.unitPrice || 0), Number(i.quantity || 1) * Number(i.unitPrice || 0)]
       );
     }
+    await audit(c, { userId: req.auth.user_id, sessionId: req.auth.session_id, action: 'CREATE_INVOICE', tableName: 'billing_accounts', recordId: a.rows[0].id, req, details: { invoice: inv, total: a.rows[0].total } });
     await c.query('COMMIT');
     res.status(201).json(a.rows[0]);
   } catch (e) {
     await c.query('ROLLBACK');
-    res.status(400).json({ error: e.message });
+    console.error('Invoice failed:', e.message);
+    res.status(e.code === '23503' ? 404 : 400).json({ error: e.code === '23503' ? 'Patient not found' : 'Invoice could not be saved' });
   } finally {
     c.release();
   }
@@ -711,10 +796,16 @@ app.get('/api/patients/:id/documents', auth, requirePerm('documents.read'), asyn
 
 app.post('/api/patients/:id/documents', auth, requirePerm('documents.write'), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'File required' });
-  const r = await pool.query(
-    `INSERT INTO documents(patient_id,document_type,file_name,storage_key,mime_type,uploaded_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,patient_id,document_type,file_name,mime_type,uploaded_at`,
-    [req.params.id, req.body.documentType || 'OTHER', req.file.originalname, req.file.filename, req.file.mimetype, req.auth.user_id]
-  );
+  let r;
+  try {
+    r = await pool.query(
+      `INSERT INTO documents(patient_id,document_type,file_name,storage_key,mime_type,uploaded_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,patient_id,document_type,file_name,mime_type,uploaded_at`,
+      [req.params.id, req.body.documentType || 'OTHER', req.file.originalname, req.file.filename, req.file.mimetype, req.auth.user_id]
+    );
+  } catch (e) {
+    fs.unlink(req.file.path, () => {}); // don't leave an orphan file when the record could not be saved
+    throw e;
+  }
   await audit(req, 'UPLOAD_DOCUMENT', 'documents', r.rows[0].id, req.params.id);
   res.status(201).json(r.rows[0]);
 });
@@ -724,10 +815,10 @@ app.get('/api/documents/:id/download', auth, requirePerm('documents.read'), asyn
   if (!r.rows[0]) return res.status(404).end();
   const f = path.join(STORAGE_DIR, r.rows[0].storage_key);
   if (!fs.existsSync(f)) return res.status(404).end();
-  res.setHeader('Content-Disposition', `attachment; filename="${r.rows[0].file_name.replace(/"/g, '')}"`);
+  await audit(req, 'DOWNLOAD_DOCUMENT', 'documents', req.params.id, r.rows[0].patient_id);
+  res.setHeader('Content-Disposition', `attachment; filename="${r.rows[0].file_name.replace(/[^\w. -]/g, '_')}"`);
   res.setHeader('Content-Type', r.rows[0].mime_type || 'application/octet-stream');
   res.sendFile(f);
-  await audit(req, 'DOWNLOAD_DOCUMENT', 'documents', req.params.id, r.rows[0].patient_id);
 });
 
 app.get('/api/patients/:id/contacts', auth, requirePerm('contacts.read'), async (req, res) => {
@@ -744,23 +835,35 @@ app.post('/api/patients/:id/contacts', auth, requirePerm('contacts.write'), asyn
   res.status(201).json(r.rows[0]);
 });
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-app.use(express.static(path.join(__dirname, '..')));
-
 app.get('/healthz', (_req, res) => res.send('ok'));
 
-app.use((req, res) => {
-  if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'API route not found' });
-  res.sendFile(path.join(__dirname, '..', 'public.html'));
+app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
+
+// Central error handler: map database/body-parsing errors to client errors, never leak internals.
+app.use((err, req, res, _next) => {
+  const PG = { '23503': [404, 'Referenced record not found'], '23505': [409, 'That record already exists'], '23502': [400, 'A required field is missing'],
+    '22P02': [400, 'A value has the wrong format'], '22007': [400, 'A date or time has the wrong format'], '22008': [400, 'A date or time has the wrong format'],
+    '22003': [400, 'A number is out of range'], '23514': [400, 'A value is not allowed'], '22001': [400, 'A value is too long'] };
+  if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: `File is larger than ${MAX_UPLOAD_MB} MB` });
+  if (err.name === 'MulterError') return res.status(400).json({ error: 'Upload failed' });
+  if (PG[err.code]) return res.status(PG[err.code][0]).json({ error: PG[err.code][1] });
+  const status = err.status >= 400 && err.status < 500 ? err.status : 500;
+  if (status === 500) console.error(`${req.method} ${req.originalUrl}:`, err);
+  res.status(status).json({ error: status === 500 ? 'Internal server error' : err.type === 'entity.parse.failed' ? 'Malformed JSON' : err.message });
 });
 
-app.listen(PORT, () => {
-  console.log(`\n======================================================`);
-  console.log(`  AYUSH Central EPR is running at: http://localhost:${PORT}`);
-  console.log(`  Demo Accounts:`);
-  console.log(`    - Reception:   reception / ayush`);
-  console.log(`    - Doctor:      doctor / ayush`);
-  console.log(`    - Pharmacist:  pharmacist / ayush`);
-  console.log(`    - Admin:       admin / ayush`);
-  console.log(`======================================================\n`);
-});
+const server = app.listen(PORT, () => console.log(`AYUSH EPR API listening on port ${PORT}${IS_PROD ? '' : ' (development mode)'}`));
+
+let closing = false;
+async function shutdown(signal) {
+  if (closing) return;
+  closing = true;
+  console.log(`${signal} received: shutting down`);
+  server.close();
+  setTimeout(() => process.exit(1), 10e3).unref();
+  await closeDatabase();
+  process.exit(0);
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('unhandledRejection', err => console.error('Unhandled rejection:', err));

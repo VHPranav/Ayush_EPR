@@ -38,6 +38,21 @@ const nextConfig: NextConfig = DEMO
         // Document uploads go through the proxy (MAX_UPLOAD_MB is 20 on the API).
         proxyClientMaxBodySize: "25mb",
       },
+      poweredByHeader: false,
+      async headers() {
+        return [{
+          source: "/:path*",
+          headers: [
+            { key: "X-Content-Type-Options", value: "nosniff" },
+            { key: "X-Frame-Options", value: "DENY" },
+            { key: "Referrer-Policy", value: "no-referrer" },
+            { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+            { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+            // HSTS is only honoured over HTTPS, so it is safe to send behind a TLS-terminating proxy.
+            { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
+          ],
+        }];
+      },
       async rewrites() {
         return [{ source: "/api/:path*", destination: `${API_URL}/api/:path*` }];
       },

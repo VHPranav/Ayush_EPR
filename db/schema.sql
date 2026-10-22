@@ -152,21 +152,7 @@ DROP TRIGGER IF EXISTS audit_no_delete ON audit_log;
 CREATE TRIGGER audit_no_update BEFORE UPDATE ON audit_log FOR EACH ROW EXECUTE FUNCTION prevent_audit_mutation();
 CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit_log FOR EACH ROW EXECUTE FUNCTION prevent_audit_mutation();
 
--- Development accounts only. Change passwords before production use.
-INSERT INTO users(username,display_name,password_hash) VALUES
- ('reception','Reception User','3848e9eff8d31953e3762251e377bb08f78099d2f2193740cd0523738da8b1a5'),
- ('doctor','Doctor User','3848e9eff8d31953e3762251e377bb08f78099d2f2193740cd0523738da8b1a5')
-ON CONFLICT(username) DO NOTHING;
-INSERT INTO user_roles(user_id,role_id)
-SELECT u.user_id,r.role_id FROM users u CROSS JOIN roles r
-WHERE (u.username='reception' AND r.name='RECEPTION') OR (u.username='doctor' AND r.name='DOCTOR')
-ON CONFLICT DO NOTHING;
-INSERT INTO users(username,display_name,password_hash) VALUES
- ('pharmacist','Pharmacy User','3848e9eff8d31953e3762251e377bb08f78099d2f2193740cd0523738da8b1a5'),
- ('admin','AYUSH Administrator','3848e9eff8d31953e3762251e377bb08f78099d2f2193740cd0523738da8b1a5')
-ON CONFLICT(username) DO NOTHING;
-INSERT INTO user_roles(user_id,role_id) SELECT u.user_id,r.role_id FROM users u CROSS JOIN roles r WHERE u.username='pharmacist' AND r.name='PHARMACIST' ON CONFLICT DO NOTHING;
-INSERT INTO user_roles(user_id,role_id) SELECT u.user_id,r.role_id FROM users u CROSS JOIN roles r WHERE u.username='admin' AND r.name='SUPER_ADMIN' ON CONFLICT DO NOTHING;
+-- No accounts are seeded here. The API creates the first Super Administrator on startup (see server/bootstrap.js).
 
 CREATE TABLE IF NOT EXISTS billing_accounts(
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), patient_id uuid NOT NULL REFERENCES patients(patient_id) ON DELETE CASCADE,
