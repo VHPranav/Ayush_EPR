@@ -19,3 +19,4 @@ server/storage/*
 .DS_Store
 *.log
 backups/
+*.local.txt
