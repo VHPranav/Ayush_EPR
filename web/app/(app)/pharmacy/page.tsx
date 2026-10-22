@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { errMsg, fmtDate } from "@/lib/format";
@@ -15,6 +15,16 @@ export default function PharmacyPage() {
   const { can } = useAuth();
   const [f, setF] = useState(blank);
   const [editing, setEditing] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [q, setQ] = useState("");
+  const [filter, setFilter] = useState<"all" | "low" | "expiring">("all");
+  // Wall-clock time can't be read during prerender, so "now" is set once mounted.
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => { const t = setTimeout(() => setNow(Date.now()), 0); return () => clearTimeout(t); }, []);
+  const daysLeft = (iso: string | null) => {
+    const m = iso && now !== null && /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+    return m && now !== null ? Math.ceil((new Date(+m[1], +m[2] - 1, +m[3]).getTime() - now) / 86_400_000) : Infinity;
+  };
   const { data: stock, error, reload } = useFetch<StockItem[]>("/api/pharmacy/stock");
   const set = (k: keyof typeof blank) => (v: string) => setF(s => ({ ...s, [k]: v }));
 
@@ -26,6 +36,7 @@ export default function PharmacyPage() {
       else await api("/api/pharmacy/stock", { body: f });
       setF(blank);
       setEditing(null);
+      setShowForm(false);
       toast(editing ? "Stock updated" : "Stock saved centrally");
       reload();
     } catch (e) {
@@ -35,6 +46,7 @@ export default function PharmacyPage() {
 
   function startEdit(x: StockItem) {
     setEditing(x.stock_id);
+    setShowForm(true);
     setF({
       medicineName: x.medicine_name, form: x.form ?? "", strength: x.strength ?? "", batchNo: x.batch_no ?? "", expiryDate: x.expiry_date ?? "",
       quantity: String(x.quantity), unit: x.unit ?? "", reorderLevel: String(x.reorder_level), supplier: x.supplier ?? "", location: x.location ?? "",
@@ -53,10 +65,22 @@ export default function PharmacyPage() {
     }
   }
 
+  const shown = (stock ?? []).filter(x => {
+    const text = `${x.medicine_name} ${x.batch_no ?? ""}`.toLowerCase();
+    if (q.trim() && !text.includes(q.trim().toLowerCase())) return false;
+    if (filter === "low") return !!x.low_stock;
+    if (filter === "expiring") return daysLeft(x.expiry_date) <= 30;
+    return true;
+  });
+
   return (
     <>
-      <PageHead title="Pharmacy Stock" subtitle={can("pharmacy.write") ? "Add, edit and remove stock. Low-stock and expiring items are flagged on the dashboard." : "Central stock database (read-only for your role)."} />
-      {can("pharmacy.write") && (
+      <PageHead
+        title="Pharmacy Stock"
+        subtitle={can("pharmacy.write") ? "Search, edit and remove stock. Low-stock and expiring items are flagged." : "Central stock database (read-only for your role)."}
+        actions={can("pharmacy.write") && !showForm && !editing ? <Button variant="primary" onClick={() => setShowForm(true)}>+ Add stock</Button> : undefined}
+      />
+      {can("pharmacy.write") && (showForm || editing) && (
       <Card title={editing ? "Edit stock item" : "Add stock"}>
         <Grid cols={4}>
           <TextField label="Medicine name*" value={f.medicineName} onChange={set("medicineName")} />
@@ -76,22 +100,31 @@ export default function PharmacyPage() {
         </Grid>
         <div className="flex gap-2">
           <Button variant="primary" onClick={save}>{editing ? "Update stock" : "Save stock"}</Button>
-          {editing && <Button onClick={() => { setEditing(null); setF(blank); }}>Cancel</Button>}
+          {editing && <Button onClick={() => { setEditing(null); setF(blank); setShowForm(false); }}>Cancel</Button>}
         </div>
       </Card>
       )}
-      <Card title="Current stock">
-        {error ? <Empty>Could not load stock: {error}</Empty> : stock === null ? <Empty>Loading…</Empty> : stock.length ? (
+      <Card
+        title="Current stock"
+        aside={<input value={q} onChange={e => setQ(e.target.value)} placeholder="Search medicine or batch" aria-label="Search stock" className="w-full max-w-[260px] rounded-xl border border-line-strong bg-white px-3.5 py-2 text-sm placeholder:text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-ring" />}
+      >
+        <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Filter">
+          {([["all", "All"], ["low", "Low stock"], ["expiring", "Expiring / expired"]] as const).map(([k, label]) => (
+            <button key={k} type="button" aria-pressed={filter === k} onClick={() => setFilter(k)}
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium ${filter === k ? "bg-brand text-white" : "bg-hover text-ink-2 hover:text-ink"}`}>{label}</button>
+          ))}
+        </div>
+        {error ? <Empty>Could not load stock: {error}</Empty> : stock === null ? <Empty>Loading…</Empty> : shown.length ? (
           <Table head={can("pharmacy.write") ? ["Medicine", "Form", "Batch", "Expiry", "Qty", "Unit", "Reorder", ""] : ["Medicine", "Form", "Batch", "Expiry", "Qty", "Unit", "Reorder"]}>
-            {stock.map(x => (
+            {shown.map(x => (
               <tr key={x.stock_id}>
-                <Td>{x.medicine_name}</Td><Td>{x.form || "—"}</Td><Td>{x.batch_no || "—"}</Td><Td>{fmtDate(x.expiry_date)}</Td>
+                <Td>{x.medicine_name}</Td><Td>{x.form || "—"}</Td><Td>{x.batch_no || "—"}</Td><Td>{fmtDate(x.expiry_date)}{daysLeft(x.expiry_date) <= 30 && <span className="ml-2"><Pill tone="red">{daysLeft(x.expiry_date) < 0 ? "Expired" : `${daysLeft(x.expiry_date)}d left`}</Pill></span>}</Td>
                 <Td>{x.quantity}{x.low_stock && <span className="ml-2"><Pill tone="amber">Low</Pill></span>}</Td><Td>{x.unit || "—"}</Td><Td>{x.reorder_level}</Td>
                 {can("pharmacy.write") && <Td><span className="flex gap-1.5"><Button onClick={() => startEdit(x)}>Edit</Button><Button variant="danger" onClick={() => remove(x)}>Remove</Button></span></Td>}
               </tr>
             ))}
           </Table>
-        ) : <Empty>No stock recorded.</Empty>}
+        ) : <Empty>{stock.length ? "No stock matches your search or filter." : "No stock recorded."}</Empty>}
       </Card>
     </>
   );

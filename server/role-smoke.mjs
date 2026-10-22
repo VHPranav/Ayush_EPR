@@ -204,6 +204,16 @@ ok((await call(tok.FINANCE, 'GET', '/api/providers')).s === 403, 'finance cannot
 const st = await call(tok.MANAGER, 'GET', '/api/stats/patients'); ok(st.s === 200 && st.j.total >= 1 && Array.isArray(st.j.months), 'patient stats');
 ok((await call(tok.AUDITOR, 'GET', '/api/stats/patients')).s === 403, 'auditor has no patient stats');
 const aud = (await call(tok.AUDITOR, 'GET', '/api/audit')).j; ok(aud.some(a => a.username === 'rt.reception'), 'audit rows carry the username');
+// --- dispensing
+const queue = await call(tok.PHARMACIST, 'GET', '/api/pharmacy/queue'); ok(queue.s === 200 && queue.j.length > 0, 'dispensing queue lists issued prescriptions');
+ok(queue.j[0].medicines && Array.isArray(queue.j[0].allergies), 'queue carries medicines and allergies');
+ok((await call(tok.DOCTOR, 'GET', '/api/pharmacy/queue')).s === 403 || (await call(tok.AYURVEDA_PHYSICIAN, 'GET', '/api/pharmacy/queue')).s === 403, 'doctors cannot use the dispensing queue');
+const rxId = queue.j[0].prescription_id;
+ok((await call(tok.AYURVEDA_PHYSICIAN, 'POST', `/api/prescriptions/${rxId}/dispense`, {})).s === 403, 'doctor cannot dispense');
+ok((await call(tok.PHARMACIST, 'POST', `/api/prescriptions/${rxId}/dispense`, {})).s === 200, 'pharmacist dispenses');
+ok((await call(tok.PHARMACIST, 'POST', `/api/prescriptions/${rxId}/dispense`, {})).s === 409, 'cannot dispense twice');
+ok(!(await call(tok.PHARMACIST, 'GET', '/api/pharmacy/queue')).j.some(r => r.prescription_id === rxId), 'dispensed prescription leaves the queue');
+ok((await call(tok.PHARMACIST, 'GET', `/api/patients/${P}`)).j.prescriptions.some(r => r.prescription_id === rxId && r.status === 'DISPENSED'), 'status shows as DISPENSED');
 // rate limiting (last: it locks the account)
 let code; for (let i = 0; i < 12; i++) code = (await login('rt.finance', 'wrong-password')).s;
 ok(code === 429, 'login throttled after repeated failures, got ' + code);

@@ -22,9 +22,11 @@ interface MedRow { key: number; name: string; frequency: string; dose: string; i
 let keySeq = 0;
 
 export default function PrescriptionPage() {
+  const { can } = useAuth();
+  const canWriteHead = can("prescriptions.write");
   return (
     <>
-      <PageHead title="Prescription" subtitle="Every save is a separate dated prescription in PostgreSQL." />
+      <PageHead title="Prescription" subtitle={canWriteHead ? "Prescribe treatments and medicines. Each save creates a new dated prescription." : "Prescriptions issued to this patient."} />
       <RequirePatient><Prescription /></RequirePatient>
     </>
   );
@@ -132,7 +134,7 @@ function Prescription() {
       <Card title="Prescription history">
         {patient!.prescriptions.length ? patient!.prescriptions.map(x => (
           <div key={x.prescription_id} className="border-b border-line py-3 last:border-0">
-            <div className="flex flex-wrap items-center gap-2"><b>{x.prescription_no}</b><span className="text-sm text-muted">{fmtDateTime(x.prescribed_at)}</span><Pill>{x.status}</Pill><Button className="ml-auto" onClick={() => printPrescription(patient!, x)}>Print</Button></div>
+            <div className="flex flex-wrap items-center gap-2"><b>{x.prescription_no}</b><span className="text-sm text-muted">{fmtDateTime(x.prescribed_at)}</span><Pill tone={x.status === "DISPENSED" ? "gray" : "green"}>{x.status === "DISPENSED" ? "Dispensed" : "Issued"}</Pill><Button className="ml-auto" onClick={() => printPrescription(patient!, x)}>Print</Button></div>
             {x.medicines?.length ? (
               <div className="mt-2">
                 <div className="text-xs font-medium uppercase tracking-wider text-muted">Medicines</div>

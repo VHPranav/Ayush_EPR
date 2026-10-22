@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useSyncExternalStore, type ReactNode } from "react";
 import {
   CalendarDays, ChevronsLeft, ChevronsRight, ClipboardList, FileCheck2, FileText, FolderOpen, History, LayoutDashboard, Leaf, ListChecks,
-  LogOut, Package, Receipt, ShieldCheck, Stethoscope, UserPlus, UsersRound, X, type LucideIcon,
+  LogOut, Package, Pill, Receipt, ShieldCheck, Stethoscope, UserPlus, UsersRound, X, type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { PatientProvider, usePatient } from "@/lib/patient";
@@ -43,6 +43,7 @@ const NAV: { section?: string; items: NavItem[] }[] = [
   {
     section: "Pharmacy & catalogue",
     items: [
+      { href: "/dispensing", label: "Dispensing", icon: Pill, perm: "pharmacy.write" },
       { href: "/pharmacy", label: "Pharmacy", icon: Package, perm: "pharmacy.read" },
       { href: "/treatment-master", label: "Treatment Master", icon: ListChecks, perm: "treatments.read" },
     ],

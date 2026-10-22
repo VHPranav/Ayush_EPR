@@ -452,6 +452,26 @@ app.delete('/api/pharmacy/stock/:id', auth, requirePerm('pharmacy.write'), async
   res.json({ ok: true });
 });
 
+// Prescriptions waiting to be dispensed, oldest first, with each patient's active allergies for the safety check.
+app.get('/api/pharmacy/queue', auth, requirePerm('pharmacy.write'), async (_req, res) => {
+  const rx = await pool.query(
+    `SELECT r.prescription_id, r.prescription_no, r.prescribed_at, r.notes, p.patient_id, p.name, p.uhid,
+            COALESCE((SELECT json_agg(a.allergen) FROM allergies a WHERE a.patient_id=p.patient_id AND COALESCE(a.status,'ACTIVE')='ACTIVE'), '[]'::json) AS allergies
+     FROM prescriptions r JOIN patients p ON p.patient_id=r.patient_id
+     WHERE r.status='ISSUED' ORDER BY r.prescribed_at ASC LIMIT 100`);
+  if (!rx.rows.length) return res.json([]);
+  const ids = rx.rows.map(r => r.prescription_id);
+  const meds = await pool.query('SELECT * FROM prescription_medicines WHERE prescription_id = ANY($1) ORDER BY sort_order', [ids]);
+  res.json(rx.rows.map(r => ({ ...r, medicines: meds.rows.filter(m => m.prescription_id === r.prescription_id) })));
+});
+
+app.post('/api/prescriptions/:id/dispense', auth, requirePerm('pharmacy.write'), async (req, res) => {
+  const { rows } = await pool.query(`UPDATE prescriptions SET status='DISPENSED' WHERE prescription_id=$1 AND status='ISSUED' RETURNING prescription_id,patient_id,prescription_no,status`, [req.params.id]);
+  if (!rows[0]) return res.status(409).json({ error: 'This prescription was already dispensed or does not exist' });
+  await audit(req, 'DISPENSE_PRESCRIPTION', 'prescriptions', rows[0].prescription_id, rows[0].patient_id, { prescriptionNo: rows[0].prescription_no });
+  res.json(rows[0]);
+});
+
 app.get('/api/pharmacy/stock', auth, requirePerm('pharmacy.read'), async (_req, res) => {
   const { rows } = await pool.query('SELECT *, (quantity<=reorder_level) AS low_stock FROM pharmacy_stock WHERE active ORDER BY medicine_name');
   res.json(rows);

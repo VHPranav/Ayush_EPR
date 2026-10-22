@@ -55,7 +55,8 @@ export default function DashboardPage() {
   }, []);
 
   // Each source is only requested when the role may read it, so no widget ever shows a 403.
-  const showPatients = can("patients.view");
+  const dispenser = can("pharmacy.write"); // pharmacist: the dashboard is about dispensing and stock, not registrations
+  const showPatients = can("patients.view") && !dispenser;
   const showChart = can("patients.register") || can("billing.read");
   const showAppts = can("appointments.read");
   const showStock = can("pharmacy.read");
@@ -65,6 +66,7 @@ export default function DashboardPage() {
   const stats = useFetch<{ total: number; months: { month: string; n: number }[] }>(showPatients ? "/api/stats/patients" : null);
   const followups = useFetch<FollowUp[]>(showAppts ? "/api/reception/followups?days=14" : null);
   const stock = useFetch<StockItem[]>(showStock ? "/api/pharmacy/stock" : null);
+  const queue = useFetch<unknown[]>(dispenser ? "/api/pharmacy/queue" : null);
   const audit = useFetch<AuditEntry[]>(showAudit ? "/api/audit" : null);
 
   const series = useMemo(() => (stats.data ? monthlySeries(stats.data.months, range) : null), [stats.data, range]);
@@ -92,6 +94,12 @@ export default function DashboardPage() {
     );
   }
   if (showAppts) cards.push(<StatCard key="a" label="Appointments · 14 days" value={num(followups, followups.data?.length ?? 0)} />);
+  if (dispenser) {
+    cards.push(
+      <StatCard key="q" label="Prescriptions to dispense" value={num(queue, queue.data?.length ?? 0)}
+        hint={queue.data?.length ? <Link href="/dispensing" className="font-semibold text-brand hover:underline">Open dispensing</Link> : null} />,
+    );
+  }
   if (showStock) {
     cards.push(
       <StatCard key="l" label="Low-stock medicines" value={num(stock, lowStock.length)}
@@ -152,7 +160,8 @@ export default function DashboardPage() {
         actions={
           <div className="flex flex-wrap gap-2">
             {can("patients.register") && <Link href="/reception"><Button variant="primary">Register patient</Button></Link>}
-            {can("pharmacy.write") && <Link href="/pharmacy"><Button variant="primary">Add stock</Button></Link>}
+            {can("pharmacy.write") && <Link href="/dispensing"><Button variant="primary">Dispense</Button></Link>}
+            {can("pharmacy.write") && <Link href="/pharmacy"><Button>Add stock</Button></Link>}
             {can("audit.read") && <Link href="/audit"><Button>Open audit log</Button></Link>}
           </div>
         }

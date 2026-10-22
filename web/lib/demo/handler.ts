@@ -33,6 +33,7 @@ const READ_PERMS: [RegExp, Perm][] = [
   [/^\/api\/audit$/, "audit.read"],
   [/^\/api\/stats\/patients$/, "patients.view"],
   [/^\/api\/providers$/, "appointments.write"],
+  [/^\/api\/pharmacy\/queue$/, "pharmacy.write"],
   [/^\/api\/users$/, "users.manage"],
 ];
 
@@ -71,7 +72,7 @@ export async function demoRequest<T>(path: string, method: string, body: unknown
     const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
     return d.summaries.filter(p => !q || [p.uhid, p.name, p.phone ?? ""].some(v => v.toLowerCase().includes(q))).slice(0, 100) as T;
   }
-  if (route === "/api/providers") return [] as T;
+  if (route === "/api/providers" || route === "/api/pharmacy/queue") return [] as T;
   if (route === "/api/stats/patients") {
     const counts = new Map<string, number>();
     for (const p of d.summaries) {
