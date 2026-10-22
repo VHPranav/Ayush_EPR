@@ -41,7 +41,14 @@ export async function getDatabasePool() {
   const defaultDbUrl = process.env.DATABASE_URL || 'postgresql://ayush:ayush_dev_password@127.0.0.1:5432/ayush_epr';
   console.log('Connecting to PostgreSQL database...');
 
-  const isReachable = await testConnection(defaultDbUrl, 2000);
+  let isReachable = await testConnection(defaultDbUrl, 2000);
+  // In production the database container may still be starting: wait for it instead of failing at once.
+  for (let i = 0; process.env.NODE_ENV === 'production' && !isReachable && i < 15; i++) {
+    console.log('Waiting for PostgreSQL...');
+    await new Promise(r => setTimeout(r, 2000));
+    isReachable = await testConnection(defaultDbUrl, 2000);
+  }
+  if (process.env.NODE_ENV === 'production' && !isReachable) throw new Error('Cannot reach PostgreSQL at DATABASE_URL.');
 
   if (isReachable) {
     console.log('✓ Connected to PostgreSQL on', defaultDbUrl.replace(/:[^:@]+@/, ':****@'));
