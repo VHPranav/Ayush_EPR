@@ -12,7 +12,7 @@ import type { CalAppt, PatientSummary } from "@/lib/types";
 import { useFetch } from "@/lib/use-fetch";
 import { Button, Field, Input, Modal, Pill, Select } from "./ui";
 
-const START_H = 7, END_H = 20, HOUR_H = 56;
+const START_H = 7, END_H = 20, HOUR_H = 84; // tall enough that a 30-minute appointment fits two lines of text
 const TYPES = ["FOLLOW-UP", "CONSULTATION", "THERAPY", "REVIEW"];
 const LENGTHS = [15, 30, 45, 60, 90, 120];
 const TYPE_STYLE: Record<string, string> = {
@@ -56,10 +56,16 @@ function visibleLayout(items: CalAppt[], cap: number) {
   const placed = layout(items);
   const groups = new Map<number, typeof placed>();
   for (const p of placed) groups.set(p.cluster, [...(groups.get(p.cluster) ?? []), p]);
-  const drawn = placed.filter(p => p.lane < cap).map(p => ({ ...p, lanes: Math.min(p.lanes, cap) }));
-  const more = [...groups.values()].filter(g => g.some(p => p.lane >= cap)).map(g => ({
-    all: g.map(p => p.a), hidden: g.filter(p => p.lane >= cap).length, top: Math.min(...g.map(p => +new Date(p.a.appointment_at))),
-  }));
+  // A time block that fits `cap` side by side is drawn as is. A more crowded one shows only its first appointment at full
+  // width (readable) plus a "+N" button for the rest, instead of many slivers.
+  const drawn: typeof placed = [];
+  const more: { all: CalAppt[]; hidden: number; top: number }[] = [];
+  for (const g of groups.values()) {
+    const crowded = g[0].lanes > cap;
+    const shown = crowded ? g.filter(p => p.lane === 0) : g;
+    drawn.push(...shown.map(p => ({ ...p, lanes: crowded ? 1 : p.lanes })));
+    if (crowded) more.push({ all: g.map(p => p.a), hidden: g.length - shown.length, top: Math.min(...g.map(p => +new Date(p.a.appointment_at))) });
+  }
   return { drawn, more };
 }
 
@@ -191,7 +197,7 @@ export function AppointmentCalendar() {
                     <div className="pointer-events-none absolute left-0 right-0 z-10 border-t-2 border-danger" style={{ top: ((today.getHours() * 60 + today.getMinutes() - START_H * 60) / 60) * HOUR_H }} />
                   )}
                   {(() => {
-                    const { drawn, more } = visibleLayout(c.items, view === "week" ? 1 : 3);
+                    const { drawn, more } = visibleLayout(c.items, view === "week" ? 1 : 2);
                     const yOf = (t: number) => { const d = new Date(t); return ((d.getHours() * 60 + d.getMinutes() - START_H * 60) / 60) * HOUR_H; };
                     return (
                       <>
@@ -199,12 +205,21 @@ export function AppointmentCalendar() {
                           const s = new Date(a.appointment_at);
                           const top = yOf(+s);
                           if (top < -HOUR_H || top > (END_H - START_H) * HOUR_H) return null;
+                          const h = Math.max((a.duration_minutes / 60) * HOUR_H - 2, 24);
+                          const sub = [a.type?.toLowerCase(), view === "week" ? a.provider_name : null].filter(Boolean).join(" · ");
                           return (
                             <button key={a.appointment_id} type="button" title={`${hhmm(s)} ${a.name}${a.provider_name ? ` · ${a.provider_name}` : ""}`} onClick={e => { e.stopPropagation(); setSelected(a); }}
-                              style={{ top: Math.max(top, 0), height: Math.max((a.duration_minutes / 60) * HOUR_H - 2, 24), left: `calc(${(lane / lanes) * 100}% + 2px)`, width: `calc(${100 / lanes}% - ${more.length ? 30 : 4}px)` }}
-                              className={`absolute overflow-hidden rounded-md border-l-4 px-1.5 py-0.5 text-left text-xs leading-tight ${TYPE_STYLE[a.type ?? ""] ?? "border-line-strong bg-hover text-ink-2"} ${a.status === "CANCELLED" ? "opacity-40 line-through" : a.status === "COMPLETED" ? "opacity-70" : ""}`}>
-                              <b className="block truncate">{hhmm(s)} {a.name}</b>
-                              {a.duration_minutes >= 30 && <span className="block truncate opacity-80">{[a.type?.toLowerCase(), view === "week" ? a.provider_name : null].filter(Boolean).join(" · ")}</span>}
+                              style={{ top: Math.max(top, 0), height: h, left: `calc(${(lane / lanes) * 100}% + 2px)`, width: `calc(${100 / lanes}% - ${more.length ? 30 : 4}px)` }}
+                              className={`absolute flex flex-col justify-center overflow-hidden rounded-md border-l-4 px-1.5 text-left text-xs leading-tight ${TYPE_STYLE[a.type ?? ""] ?? "border-line-strong bg-hover text-ink-2"} ${a.status === "CANCELLED" ? "opacity-40 line-through" : a.status === "COMPLETED" ? "opacity-70" : ""}`}>
+                              {h >= 38 ? (
+                                <>
+                                  <b className="block truncate">{hhmm(s)} {a.name}</b>
+                                  {sub && <span className="block truncate opacity-80">{sub}</span>}
+                                </>
+                              ) : (
+                                // Too short for two lines: keep everything on one line rather than clipping the second.
+                                <span className="block truncate"><b>{hhmm(s)} {a.name}</b>{sub ? <span className="opacity-80"> · {sub}</span> : null}</span>
+                              )}
                             </button>
                           );
                         })}
