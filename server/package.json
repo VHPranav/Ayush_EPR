@@ -11,10 +11,12 @@
     "export:permissions": "node export-permissions.mjs"
   },
   "dependencies": {
-    "embedded-postgres": "^18.4.0-beta.17",
     "express": "^5.1.0",
     "helmet": "^8.1.0",
     "multer": "^2.0.2",
     "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "embedded-postgres": "^18.4.0-beta.17"
   }
 }

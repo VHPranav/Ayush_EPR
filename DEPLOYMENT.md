@@ -29,3 +29,18 @@ Restore: `deploy/scripts/restore.sh <db.dump> <documents.tar>` — rehearse once
 
 ## Roles
 Defined in `server/permissions.js`; run `npm --prefix server test` after changing them.
+
+## Verified on real containers
+Tested on Docker 29 (Colima on an Apple-silicon Mac) with a fresh `.env` from `setup-env.sh`:
+- build and start from nothing; first admin created; default/dev passwords rejected; API and database not published to the host;
+- full 15-role API test (932 checks) and a browser pass of every role against the running containers;
+- backup, then removal of all volumes, then fresh start and `restore.sh`: patients, users, uploaded documents and the audit lock all came back, old users could sign in;
+- HTTPS overlay with Caddy (HTTP redirects to HTTPS, HSTS, uploads up to 20 MB, larger ones refused cleanly);
+- `docker compose down` + `up`, and a rebuild with `--build`, keep all data; the API container restarts by itself after a crash.
+
+Not tested here: a public domain with a real Let's Encrypt certificate (needs your DNS), Windows hosts, and printing.
+
+## Notes
+- `DOMAIN` must be in `.env` for the HTTPS overlay (compose refuses to start the overlay without it).
+- If ports 3000, 80 or 443 are already used on the server, change them in `docker-compose.yml` (or an override file) before starting.
+- `restore.sh` needs the stack running (it restores into the running database). Stop staff from using the system while it runs.
