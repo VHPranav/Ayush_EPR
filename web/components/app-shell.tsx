@@ -11,6 +11,7 @@ import { useAuth } from "@/lib/auth";
 import { PatientProvider, usePatient } from "@/lib/patient";
 import type { Perm } from "@/lib/types";
 import { sidebarPref } from "@/lib/ui-prefs";
+import { roleLabel } from "@/lib/roles";
 import { DEMO } from "@/lib/api";
 import { GlobalSearch } from "./global-search";
 import { Avatar, Card, Empty } from "./ui";
@@ -22,7 +23,7 @@ const NAV: { section?: string; items: NavItem[] }[] = [
   {
     section: "Front desk",
     items: [
-      { href: "/reception", label: "Reception", icon: UserPlus, perm: "patients.view" },
+      { href: "/reception", label: "Patients", icon: UserPlus, perm: "patients.view" },
       { href: "/appointments", label: "Appointments", icon: CalendarDays, perm: "appointments.read" },
       { href: "/billing", label: "Billing", icon: Receipt, perm: "billing.read" },
       { href: "/documents", label: "Documents", icon: FolderOpen, perm: "documents.read" },
@@ -163,7 +164,7 @@ function TopBar() {
             <Avatar name={user.name} size={38} />
             <div className="hidden min-w-0 lg:block">
               <div className="truncate text-sm font-semibold leading-tight text-ink">{user.name}</div>
-              <div className="truncate text-xs leading-tight text-muted">{user.roles.join(", ").replaceAll("_", " ").toLowerCase()}</div>
+              <div className="truncate text-xs leading-tight text-muted">{user.roles.map(roleLabel).join(", ")}</div>
             </div>
           </div>
         )}

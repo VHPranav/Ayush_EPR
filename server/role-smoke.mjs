@@ -173,6 +173,37 @@ ok((await call(tok.DOCTOR, 'POST', '/api/auth/logout', {})).s === 200, 'logout')
 // audit trail content
 const au = (await call(tok.AUDITOR, 'GET', '/api/audit')).j; const acts = new Set(au.map(a => a.action));
 for (const a of ['LOGIN_SUCCESS', 'LOGIN_FAILURE', 'CREATE_USER', 'CREATE_PATIENT', 'ISSUE_PRESCRIPTION', 'UPLOAD_DOCUMENT', 'DOWNLOAD_DOCUMENT', 'CREATE_INVOICE', 'DELETE_STOCK', 'DEACTIVATE_USER', 'RESET_PASSWORD', 'PASSWORD_CHANGED', 'LOGOUT']) ok(acts.has(a), 'audit has ' + a);
+// --- UI-support endpoints
+const full = (await call(tok.PHARMACIST, 'GET', `/api/patients/${P}`)).j;
+await call(tok.RECEPTION, 'POST', `/api/patients/${P}/allergies`, { allergen: 'Penicillin', severity: 'HIGH' });
+const pharm = (await call(tok.PHARMACIST, 'GET', `/api/patients/${P}`)).j;
+ok(pharm.allergies?.some(a => a.allergen === 'Penicillin'), 'pharmacist sees allergies on the patient');
+ok(pharm.prescriptions[0]?.medicines?.length > 0, 'pharmacist sees prescription medicines');
+ok(pharm.prescriptions.some(r => r.treatments?.length > 0), 'prescription treatments included');
+ok((await call(tok.FINANCE, 'GET', `/api/patients/${P}`)).j.allergies.length === 0, 'finance gets no allergies');
+const apptAt = new Date(Date.now() + 2 * 864e5).toISOString();
+ok((await call(tok.RECEPTION, 'POST', `/api/patients/${P}/appointments`, { appointmentAt: new Date(Date.now() - 864e5).toISOString() })).s === 400, 'past appointment rejected');
+ok((await call(tok.RECEPTION, 'POST', `/api/patients/${P}/appointments`, { appointmentAt: 'nonsense' })).s === 400, 'invalid appointment date rejected');
+const ap = await call(tok.RECEPTION, 'POST', `/api/patients/${P}/appointments`, { appointmentAt: apptAt, type: 'REVIEW' });
+ok(ap.s === 201, 'future appointment ok');
+const fu = (await call(tok.RECEPTION, 'GET', '/api/reception/followups?days=30')).j;
+ok(fu.some(x => x.appointment_id === ap.j.appointment_id && x.patient_id === P), 'followups carry ids');
+ok((await call(tok.DIETITIAN, 'PUT', `/api/appointments/${ap.j.appointment_id}`, { status: 'COMPLETED' })).s === 403, 'dietitian cannot change appointment status');
+ok((await call(tok.RECEPTION, 'PUT', `/api/appointments/${ap.j.appointment_id}`, { status: 'BOGUS' })).s === 400, 'bad appointment status');
+ok((await call(tok.RECEPTION, 'PUT', `/api/appointments/${ap.j.appointment_id}`, { status: 'CANCELLED' })).s === 200, 'reception cancels appointment');
+ok(!(await call(tok.RECEPTION, 'GET', '/api/reception/followups?days=30')).j.some(x => x.appointment_id === ap.j.appointment_id), 'cancelled appointment leaves the list');
+const inv = await call(tok.RECEPTION, 'POST', `/api/patients/${P}/billing`, { items: [{ description: 'Consult', quantity: 2, unitPrice: 10 }], discount: 5, tax: 2 });
+ok(inv.s === 201 && Number(inv.j.total) === 17, 'invoice total with discount and tax: ' + inv.j.total);
+ok((await call(tok.DIETITIAN, 'PUT', `/api/billing/${inv.j.id}`, { status: 'PAID' })).s === 403, 'dietitian cannot mark paid');
+ok((await call(tok.FINANCE, 'PUT', `/api/billing/${inv.j.id}`, { status: 'PAID' })).s === 200, 'finance marks paid');
+ok((await call(tok.FINANCE, 'PUT', `/api/billing/${inv.j.id}`, { status: 'X' })).s === 400, 'bad invoice status');
+const bill = (await call(tok.FINANCE, 'GET', `/api/patients/${P}/billing`)).j;
+ok(bill.accounts.find(a => a.id === inv.j.id)?.status === 'PAID' && bill.items.some(i => i.account_id === inv.j.id), 'billing returns status and items');
+const prov = await call(tok.RECEPTION, 'GET', '/api/providers'); ok(prov.s === 200 && prov.j.length >= 3, 'providers list');
+ok((await call(tok.FINANCE, 'GET', '/api/providers')).s === 403, 'finance cannot list providers');
+const st = await call(tok.MANAGER, 'GET', '/api/stats/patients'); ok(st.s === 200 && st.j.total >= 1 && Array.isArray(st.j.months), 'patient stats');
+ok((await call(tok.AUDITOR, 'GET', '/api/stats/patients')).s === 403, 'auditor has no patient stats');
+const aud = (await call(tok.AUDITOR, 'GET', '/api/audit')).j; ok(aud.some(a => a.username === 'rt.reception'), 'audit rows carry the username');
 // rate limiting (last: it locks the account)
 let code; for (let i = 0; i < 12; i++) code = (await login('rt.finance', 'wrong-password')).s;
 ok(code === 429, 'login throttled after repeated failures, got ' + code);

@@ -52,15 +52,22 @@ export interface ClinicalRecord {
   created_at: string;
 }
 
+export interface RxMedicine { medicine_name: string; dose: string | null; frequency: string | null; instructions: string | null }
+export interface RxTreatment { treatment_name: string; frequency: string | null; duration: string | null }
 export interface Prescription {
   prescription_id: string;
   prescription_no: string;
   prescribed_at: string;
   status: string;
+  notes?: string | null;
+  medicines?: RxMedicine[];
+  treatments?: RxTreatment[];
 }
 
 export interface Patient extends PatientSummary {
   email: string | null;
+  /** Active allergies; only sent to roles that may read them. */
+  allergies?: { id: string; allergen: string; reaction: string | null; severity: string | null }[];
   clinicalRecords: ClinicalRecord[];
   prescriptions: Prescription[];
   letters?: unknown[];
@@ -78,20 +85,21 @@ export interface Referral { id: string; specialty: string | null; referred_to: s
 export interface CarePlan { id: string; plan_type: string; review_date: string | null; status: string }
 export interface TreatmentSession { id: string; session_date: string; start_time: string | null; end_time: string | null; status: string; procedure_notes: string | null }
 export interface PatientDocument { id: string; document_type: string; file_name: string; uploaded_at: string }
-export interface BillingAccount { id: string; invoice_number: string; total: number | string; status: string }
+export interface BillingAccount { id: string; invoice_number: string; total: number | string; status: string; account_date?: string; subtotal?: number | string; discount?: number | string; tax?: number | string }
+export interface BillingItem { id: string; account_id: string; description: string; category: string | null; quantity: number | string; unit_price: number | string; amount: number | string }
 export interface Discharge { id?: string; summary_date?: string; discharge_date?: string; followup_plan: string | null }
 export interface StockItem {
   stock_id: string;
-  medicine_name: string; form: string | null; batch_no: string | null; expiry_date: string | null;
-  quantity: number | string; unit: string | null; reorder_level: number | string;
+  medicine_name: string; form: string | null; strength?: string | null; batch_no: string | null; expiry_date: string | null;
+  quantity: number | string; unit: string | null; reorder_level: number | string; supplier?: string | null; location?: string | null;
   low_stock?: boolean;
 }
 export interface TreatmentMaster {
   treatment_id: string; name: string; category: string | null;
-  default_frequency: string | null; default_duration: string | null;
+  default_frequency: string | null; default_duration: string | null; instructions?: string | null;
 }
-export interface FollowUp { appointment_at: string; name: string; uhid: string; type: string | null; reason: string | null }
-export interface AuditEntry { event_time: string; action: string; table_name: string | null; record_id: string | null }
+export interface FollowUp { appointment_id?: string; patient_id?: string; appointment_at: string; name: string; uhid: string; type: string | null; reason: string | null }
+export interface AuditEntry { event_time: string; action: string; table_name: string | null; record_id: string | null; username?: string | null; display_name?: string | null }
 
 export interface ManagedUser {
   user_id: string;

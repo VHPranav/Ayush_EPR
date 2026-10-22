@@ -40,7 +40,12 @@ export default function ReceptionPage() {
 
   async function save() {
     if (!f.first.trim() || !f.last.trim()) return toast("First and last name are required");
+    const fullName = [f.first, f.middle, f.last].filter(Boolean).join(" ").trim();
     try {
+      // Warn before creating a second record for the same person (same name + date of birth, or same phone).
+      const found = await api<PatientSummary[]>("/api/patients?q=" + encodeURIComponent(f.phone.trim() || f.last.trim()));
+      const dup = found.find(p => (f.phone.trim() && p.phone === f.phone.trim()) || (p.name.toLowerCase() === fullName.toLowerCase() && !!f.dob && p.dob === f.dob));
+      if (dup && !window.confirm(`${dup.name} (${dup.uhid}) looks like the same person. Register a new record anyway?`)) return;
       const p = await api<Patient>("/api/patients", {
         body: {
           name: [f.first, f.middle, f.last].filter(Boolean).join(" "),
@@ -71,7 +76,7 @@ export default function ReceptionPage() {
 
   return (
     <>
-      <PageHead title="Reception" subtitle="Registration is written directly to the central database." actions={can("patients.register") ? <Button variant="primary" onClick={() => setF(blank)}>New patient</Button> : undefined} />
+      <PageHead title="Patients" subtitle={can("patients.register") ? "Register a new patient, or search the directory and open an existing record." : "Search the directory and open a patient's record."} actions={can("patients.register") ? <Button variant="primary" onClick={() => { setF(blank); window.scrollTo({ top: 0, behavior: "smooth" }); }}>New patient</Button> : undefined} />
       {can("patients.register") && (
       <Card title="Patient Registration" aside={<Pill>UHID assigned centrally on save</Pill>}>
         <Grid cols={4}>
@@ -116,7 +121,7 @@ export default function ReceptionPage() {
               </tr>
             ))}
           </Table>
-        ) : <Empty>No patients found. Click &quot;New patient&quot; above to register one.</Empty>}
+        ) : <Empty>No patients found.{can("patients.register") ? " Use the form above to register one." : ""}</Empty>}
       </Card>
     </>
   );

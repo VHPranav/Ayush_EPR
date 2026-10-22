@@ -31,6 +31,8 @@ const READ_PERMS: [RegExp, Perm][] = [
   [/^\/api\/treatment-master$/, "treatments.read"],
   [/^\/api\/reception\/followups$/, "appointments.read"],
   [/^\/api\/audit$/, "audit.read"],
+  [/^\/api\/stats\/patients$/, "patients.view"],
+  [/^\/api\/providers$/, "appointments.write"],
   [/^\/api\/users$/, "users.manage"],
 ];
 
@@ -69,6 +71,16 @@ export async function demoRequest<T>(path: string, method: string, body: unknown
     const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
     return d.summaries.filter(p => !q || [p.uhid, p.name, p.phone ?? ""].some(v => v.toLowerCase().includes(q))).slice(0, 100) as T;
   }
+  if (route === "/api/providers") return [] as T;
+  if (route === "/api/stats/patients") {
+    const counts = new Map<string, number>();
+    for (const p of d.summaries) {
+      const k = new Date(p.registered_at);
+      const key = `${k.getFullYear()}-${String(k.getMonth() + 1).padStart(2, "0")}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return { total: d.summaries.length, months: [...counts].sort().map(([month, n]) => ({ month, n })) } as T;
+  }
   if (route === "/api/pharmacy/stock") return d.stock as T;
   if (route === "/api/treatment-master") return d.treatments as T;
   if (route === "/api/audit") return d.audit as T;
@@ -89,6 +101,7 @@ export async function demoRequest<T>(path: string, method: string, body: unknown
     case undefined: // chart sections are filtered by permission, exactly like the real API
       return {
         ...patient,
+        allergies: can("allergies.read") ? d.allergies[pid] : [],
         clinicalRecords: can("clinical.read") ? patient.clinicalRecords : [],
         prescriptions: can("prescriptions.read") ? patient.prescriptions : [],
         letters: can("clinical.read") ? patient.letters : [],

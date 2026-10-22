@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { DottedGlobe } from "@/components/dotted-globe";
 import { Button, Field, Input } from "@/components/ui";
-import { DEMO, checkHealth } from "@/lib/api";
+import { DEMO, EXPIRED_KEY, checkHealth } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { errMsg } from "@/lib/format";
 
@@ -35,6 +35,7 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [health, setHealth] = useState<Health>("checking");
+  const [expired, setExpired] = useState(false);
 
   // Pre-fill the username remembered on this device (only the username is ever stored, never the password).
   useEffect(() => {
@@ -54,8 +55,23 @@ export default function LoginPage() {
     return () => clearInterval(t);
   }, []);
 
+  // Signed out by expiry or deactivation: say so, and bring the user back to the page they were on after signing in.
   useEffect(() => {
-    if (ready && user) router.replace("/dashboard");
+    const t = setTimeout(() => {
+      try { if (sessionStorage.getItem(EXPIRED_KEY)) setExpired(true); } catch {}
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    if (!(ready && user)) return;
+    let back = "/dashboard";
+    try {
+      const p = sessionStorage.getItem(EXPIRED_KEY);
+      sessionStorage.removeItem(EXPIRED_KEY);
+      if (p && p.startsWith("/") && !p.startsWith("//") && p !== "/login" && p !== "/") back = p;
+    } catch {}
+    router.replace(back);
   }, [ready, user, router]);
 
   async function submit(e: FormEvent) {
@@ -114,6 +130,9 @@ export default function LoginPage() {
               Remember my username on this device
             </label>
 
+            {expired && !error && (
+              <div role="status" className="mb-4 rounded-xl bg-warn-soft px-4 py-3 text-sm font-medium text-warn">Your session ended. Please sign in again to continue.</div>
+            )}
             {error && (
               <div role="alert" className="mb-4 rounded-xl bg-danger-soft px-4 py-3 text-sm font-medium text-danger">{error}</div>
             )}

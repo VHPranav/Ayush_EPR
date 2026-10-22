@@ -14,9 +14,9 @@ export default function AuditPage() {
         <Button onClick={reload}>Refresh</Button>
         <div className="mt-3">
           {error ? <Empty>Audit access is restricted or route is unavailable.</Empty> : log === null ? <Empty>Loading…</Empty> : (
-            <Table head={["Time", "Action", "Table", "Record"]}>
+            <Table head={["Time", "User", "Action", "Table", "Record"]}>
               {log.map((x, i) => (
-                <tr key={i}><Td>{fmtDateTime(x.event_time)}</Td><Td>{x.action}</Td><Td>{x.table_name}</Td><Td>{x.record_id}</Td></tr>
+                <tr key={i}><Td>{fmtDateTime(x.event_time)}</Td><Td>{x.username || "—"}</Td><Td>{x.action}</Td><Td>{x.table_name}</Td><Td>{x.record_id}</Td></tr>
               ))}
             </Table>
           )}

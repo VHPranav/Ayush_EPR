@@ -367,11 +367,27 @@ app.get('/api/patients/:id', auth, requirePerm('patients.view'), async (req, res
     pool.query('SELECT * FROM appointments WHERE patient_id=$1 ORDER BY appointment_at DESC', [id])
   ]);
   const can = perm => req.auth.permissions.includes(perm);
+  // Prescription lines and allergies travel with the patient so every screen (and the allergy banner) can show them.
+  let prescriptions = [];
+  if (can('prescriptions.read') && rx.rows.length) {
+    const ids = rx.rows.map(r => r.prescription_id);
+    const [meds, trs] = await Promise.all([
+      pool.query('SELECT * FROM prescription_medicines WHERE prescription_id = ANY($1) ORDER BY sort_order', [ids]),
+      pool.query('SELECT * FROM prescription_treatments WHERE prescription_id = ANY($1) ORDER BY sort_order', [ids]),
+    ]);
+    prescriptions = rx.rows.map(r => ({
+      ...r,
+      medicines: meds.rows.filter(m => m.prescription_id === r.prescription_id),
+      treatments: trs.rows.filter(t => t.prescription_id === r.prescription_id),
+    }));
+  }
+  const allergies = can('allergies.read') ? (await pool.query("SELECT id,allergen,reaction,severity FROM allergies WHERE patient_id=$1 AND COALESCE(status,'ACTIVE')='ACTIVE' ORDER BY created_at DESC", [id])).rows : [];
   res.json({
     ...p.rows[0],
     id: p.rows[0].patient_id,
+    allergies,
     clinicalRecords: can('clinical.read') ? cr.rows : [],
-    prescriptions: can('prescriptions.read') ? rx.rows : [],
+    prescriptions,
     letters: can('clinical.read') ? lt.rows : [],
     discharges: can('clinical.read') ? ds.rows : [],
     appointments: can('appointments.read') ? ap.rows : []
@@ -531,6 +547,9 @@ app.post('/api/patients/:id/discharge-summaries', auth, requirePerm('discharge.w
 
 app.post('/api/patients/:id/appointments', auth, requirePerm('appointments.write'), async (req, res) => {
   const b = req.body || {};
+  const when = new Date(b.appointmentAt);
+  if (!b.appointmentAt || Number.isNaN(when.getTime())) return res.status(400).json({ error: 'Choose a valid date and time' });
+  if (when.getTime() < Date.now() - 5 * 60e3) return res.status(400).json({ error: 'The appointment cannot be in the past' });
   const { rows } = await pool.query(
     'INSERT INTO appointments(patient_id,appointment_at,provider_user,type,reason,reception_reminder,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',
     [req.params.id, b.appointmentAt, b.providerUser || null, b.type || null, b.reason || null, b.receptionReminder !== false, req.auth.user_id]
@@ -539,15 +558,42 @@ app.post('/api/patients/:id/appointments', auth, requirePerm('appointments.write
   res.status(201).json(rows[0]);
 });
 
+app.get('/api/providers', auth, requirePerm('appointments.write'), async (_req, res) => {
+  const { rows } = await pool.query(
+    `SELECT DISTINCT u.user_id, u.display_name FROM users u JOIN user_roles ur ON ur.user_id=u.user_id JOIN roles r ON r.role_id=ur.role_id
+     WHERE u.active AND r.name IN ('DOCTOR','AYURVEDA_PHYSICIAN','MODERN_MEDICAL_CONSULTANT') ORDER BY u.display_name`);
+  res.json(rows);
+});
+
+app.put('/api/appointments/:id', auth, requirePerm('appointments.write'), async (req, res) => {
+  const { status } = req.body || {};
+  if (!['SCHEDULED', 'COMPLETED', 'CANCELLED', 'NO_SHOW'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  const { rows } = await pool.query('UPDATE appointments SET status=$1 WHERE appointment_id=$2 RETURNING appointment_id,patient_id,status', [status, req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'Appointment not found' });
+  await audit(req, 'UPDATE_APPOINTMENT', 'appointments', rows[0].appointment_id, rows[0].patient_id);
+  res.json(rows[0]);
+});
+
+// Registration counts for the dashboard, computed over all patients (the directory list is capped at 100).
+app.get('/api/stats/patients', auth, requirePerm('patients.view'), async (_req, res) => {
+  const { rows } = await pool.query(
+    `SELECT to_char(date_trunc('month', registered_at), 'YYYY-MM') AS month, count(*)::int AS n
+     FROM patients WHERE archived_at IS NULL AND registered_at >= date_trunc('month', now()) - interval '11 months' GROUP BY 1 ORDER BY 1`);
+  const total = (await pool.query('SELECT count(*)::int AS n FROM patients WHERE archived_at IS NULL')).rows[0].n;
+  res.json({ total, months: rows });
+});
+
 app.get('/api/audit', auth, requirePerm('audit.read'), async (_req, res) => {
-  const { rows } = await pool.query('SELECT * FROM audit_log ORDER BY event_time DESC LIMIT 500');
+  const { rows } = await pool.query(
+    `SELECT a.audit_id, a.event_time, a.action, a.table_name, a.record_id, a.ip_address, u.username, u.display_name
+     FROM audit_log a LEFT JOIN users u ON u.user_id=a.user_id ORDER BY a.event_time DESC, a.audit_id DESC LIMIT 500`);
   res.json(rows);
 });
 
 app.get('/api/reception/followups', auth, requirePerm('appointments.read'), async (req, res) => {
   const days = Math.min(Number(req.query.days || 30), 365);
   const { rows } = await pool.query(
-    `SELECT a.*,p.uhid,p.name FROM appointments a
+    `SELECT a.*,p.uhid,p.name,p.patient_id FROM appointments a
      JOIN patients p ON p.patient_id=a.patient_id
      WHERE a.reception_reminder AND a.status='SCHEDULED' AND a.appointment_at BETWEEN now() AND now()+($1||' days')::interval
      ORDER BY a.appointment_at`,
@@ -787,6 +833,15 @@ app.post('/api/patients/:id/billing', auth, requirePerm('billing.write'), async 
   } finally {
     c.release();
   }
+});
+
+app.put('/api/billing/:id', auth, requirePerm('billing.write'), async (req, res) => {
+  const { status } = req.body || {};
+  if (!['OPEN', 'PAID', 'VOID'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  const { rows } = await pool.query('UPDATE billing_accounts SET status=$1 WHERE id=$2 RETURNING id,patient_id,invoice_number,status', [status, req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'Invoice not found' });
+  await audit(req, 'UPDATE_INVOICE_STATUS', 'billing_accounts', rows[0].id, rows[0].patient_id, { status, invoice: rows[0].invoice_number });
+  res.json(rows[0]);
 });
 
 app.get('/api/patients/:id/documents', auth, requirePerm('documents.read'), async (req, res) => {

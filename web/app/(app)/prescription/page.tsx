@@ -8,7 +8,7 @@ import { usePatient } from "@/lib/patient";
 import { useToast } from "@/lib/toast";
 import { useFetch } from "@/lib/use-fetch";
 import type { TreatmentMaster } from "@/lib/types";
-import { AreaField, Button, Card, Empty, Input, PageHead, RequirePatient, Select } from "@/components/ui";
+import { AreaField, Button, Card, Empty, Input, PageHead, Pill, RequirePatient, Select } from "@/components/ui";
 
 const FREQ = ["Once daily", "Twice daily", "Thrice daily", "As required"];
 const DURATION = ["1 day", "3 days", "7 days", "14 days", "21 days", "28 days"];
@@ -110,7 +110,26 @@ function Prescription() {
 
       <Card title="Prescription history">
         {patient!.prescriptions.length ? patient!.prescriptions.map(x => (
-          <div key={x.prescription_id} className="border-b border-line p-2"><b>{x.prescription_no}</b> • {fmtDateTime(x.prescribed_at)} • {x.status}</div>
+          <div key={x.prescription_id} className="border-b border-line py-3 last:border-0">
+            <div className="flex flex-wrap items-center gap-2"><b>{x.prescription_no}</b><span className="text-sm text-muted">{fmtDateTime(x.prescribed_at)}</span><Pill>{x.status}</Pill></div>
+            {x.medicines?.length ? (
+              <div className="mt-2">
+                <div className="text-xs font-medium uppercase tracking-wider text-muted">Medicines</div>
+                <ul className="m-0 mt-1 list-none p-0 text-sm text-ink-2">
+                  {x.medicines.map((m, i) => <li key={i} className="py-0.5"><b className="text-ink">{m.medicine_name}</b>{[m.dose, m.frequency].filter(Boolean).map(v => ` · ${v}`)}{m.instructions ? ` — ${m.instructions}` : ""}</li>)}
+                </ul>
+              </div>
+            ) : null}
+            {x.treatments?.length ? (
+              <div className="mt-2">
+                <div className="text-xs font-medium uppercase tracking-wider text-muted">Treatments</div>
+                <ul className="m-0 mt-1 list-none p-0 text-sm text-ink-2">
+                  {x.treatments.map((t, i) => <li key={i} className="py-0.5"><b className="text-ink">{t.treatment_name}</b>{[t.frequency, t.duration].filter(Boolean).map(v => ` · ${v}`)}</li>)}
+                </ul>
+              </div>
+            ) : null}
+            {x.notes ? <p className="mb-0 mt-2 text-sm text-ink-2">Notes: {x.notes}</p> : null}
+          </div>
         )) : <Empty>No prescriptions.</Empty>}
       </Card>
     </>

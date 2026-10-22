@@ -7,3 +7,7 @@ export const fmtDate = (v: string | null | undefined) => {
 };
 export const fmtDateTime = (v: string | null | undefined) => (v ? new Date(v).toLocaleString() : "—");
 export const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong");
+
+/** Currency symbol for invoices; set NEXT_PUBLIC_CURRENCY at build time (default ₹). */
+export const CURRENCY = process.env.NEXT_PUBLIC_CURRENCY || "₹";
+export const money = (v: number | string | null | undefined) => `${CURRENCY}${Number(v ?? 0).toFixed(2)}`;

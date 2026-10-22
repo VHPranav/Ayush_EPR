@@ -4,6 +4,8 @@ export const DEMO = process.env.NEXT_PUBLIC_DEMO === "1";
 const TOKEN_KEY = "AYUSH_TOKEN";
 const USER_KEY = "AYUSH_USER";
 export const PATIENT_KEY = "AYUSH_PATIENT";
+/** Set when a session ends on its own (expiry, deactivation): holds the page the user was on, so login can explain and return there. */
+export const EXPIRED_KEY = "AYUSH_EXPIRED";
 
 export class ApiError extends Error {
   constructor(message: string, public status: number) {
