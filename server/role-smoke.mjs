@@ -222,6 +222,13 @@ ok(!!rxm?.row_id, 'prescription medicines carry row_id');
 ok((await call(tok.AYURVEDA_PHYSICIAN, 'POST', `/api/patients/${P}/administrations`, { prescriptionMedicineId: rxm.row_id, dose: rxm.dose, status: 'GIVEN', notes: 'n' })).s === 201, 'medication round recorded');
 const adm2 = (await call(tok.AYURVEDA_PHYSICIAN, 'GET', `/api/patients/${P}/administrations`)).j;
 ok(adm2[0]?.medicine_name === rxm.medicine_name && !!adm2[0]?.administered_by_name, 'administration list shows medicine and who gave it');
+// --- therapy sessions
+const trId = (await call(tok.PHARMACIST, 'GET', `/api/patients/${P}`)).j.prescriptions.flatMap(r => r.treatments)[0]?.row_id;
+ok(!!trId, 'prescription treatments carry row_id');
+ok((await call(tok.YOGA_THERAPIST, 'POST', `/api/patients/${P}/treatment-sessions`, { prescriptionTreatmentId: trId, procedureNotes: 'done', status: 'BOGUS' })).s === 400, 'invalid session status rejected');
+ok((await call(tok.YOGA_THERAPIST, 'POST', `/api/patients/${P}/treatment-sessions`, { prescriptionTreatmentId: trId, procedureNotes: 'done', adverseEvent: 'rash' })).s === 201, 'session linked to a prescribed treatment');
+const sess = (await call(tok.YOGA_THERAPIST, 'GET', `/api/patients/${P}/treatment-sessions`)).j;
+ok(sess[0]?.treatment_name && sess[0]?.practitioner_name && sess[0]?.adverse_event === 'rash', 'session list shows treatment, practitioner and adverse event');
 // rate limiting (last: it locks the account)
 let code; for (let i = 0; i < 12; i++) code = (await login('rt.finance', 'wrong-password')).s;
 ok(code === 429, 'login throttled after repeated failures, got ' + code);

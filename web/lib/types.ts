@@ -54,7 +54,7 @@ export interface ClinicalRecord {
 }
 
 export interface RxMedicine { row_id?: string; medicine_name: string; dose: string | null; frequency: string | null; instructions: string | null }
-export interface RxTreatment { treatment_name: string; frequency: string | null; duration: string | null }
+export interface RxTreatment { row_id?: string; treatment_name: string; frequency: string | null; duration: string | null }
 export interface Prescription {
   prescription_id: string;
   prescription_no: string;
@@ -86,7 +86,7 @@ export interface Investigation { id: string; test_name: string; result_summary: 
 export interface Outcome { id: string; domain: string; scale_name: string | null; score: number | string | null; narrative: string | null }
 export interface Referral { id: string; specialty: string | null; referred_to: string | null; status: string; reason: string | null }
 export interface CarePlan { id: string; plan_type: string; review_date: string | null; status: string }
-export interface TreatmentSession { id: string; session_date: string; start_time: string | null; end_time: string | null; status: string; procedure_notes: string | null }
+export interface TreatmentSession { id: string; session_date: string; start_time: string | null; end_time: string | null; status: string; procedure_notes: string | null; pre_assessment?: string | null; post_assessment?: string | null; tolerance?: string | null; adverse_event?: string | null; response?: string | null; materials?: string | null; practitioner_name?: string | null; treatment_name?: string | null }
 export interface PatientDocument { id: string; document_type: string; file_name: string; uploaded_at: string }
 export interface BillingAccount { id: string; invoice_number: string; total: number | string; status: string; account_date?: string; subtotal?: number | string; discount?: number | string; tax?: number | string }
 export interface BillingItem { id: string; account_id: string; description: string; category: string | null; quantity: number | string; unit_price: number | string; amount: number | string }

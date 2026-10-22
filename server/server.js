@@ -776,12 +776,16 @@ app.post('/api/patients/:id/care-plans', auth, requirePerm('chart.write'), async
 });
 
 app.get('/api/patients/:id/treatment-sessions', auth, requirePerm('clinical.read'), async (req, res) => {
-  const { rows } = await pool.query('SELECT * FROM treatment_sessions WHERE patient_id=$1 ORDER BY session_date DESC,start_time DESC', [req.params.id]);
+  const { rows } = await pool.query(
+    `SELECT ts.*, u.display_name AS practitioner_name, pt.treatment_name FROM treatment_sessions ts
+     LEFT JOIN users u ON u.user_id=ts.practitioner_id LEFT JOIN prescription_treatments pt ON pt.row_id=ts.prescription_treatment_id
+     WHERE ts.patient_id=$1 ORDER BY ts.session_date DESC, ts.start_time DESC NULLS LAST, ts.created_at DESC`, [req.params.id]);
   res.json(rows);
 });
 
 app.post('/api/patients/:id/treatment-sessions', auth, requirePerm('sessions.write'), async (req, res) => {
   const b = req.body || {};
+  if (!['COMPLETED', 'PLANNED', 'CANCELLED'].includes(b.status || 'COMPLETED')) return res.status(400).json({ error: 'Invalid session status' });
   const r = await pool.query(
     `INSERT INTO treatment_sessions(patient_id,prescription_treatment_id,session_date,start_time,end_time,practitioner_id,pre_assessment,procedure_notes,materials,tolerance,adverse_event,post_assessment,response,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
     [req.params.id, b.prescriptionTreatmentId || null, b.sessionDate || new Date().toISOString().slice(0, 10), b.startTime || null, b.endTime || null, req.auth.user_id, b.preAssessment || null, b.procedureNotes || null, b.materials || null, b.tolerance || null, b.adverseEvent || null, b.postAssessment || null, b.response || null, b.status || 'COMPLETED']
