@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { errMsg, fmtDateTime } from "@/lib/format";
@@ -21,12 +22,19 @@ export default function AppointmentsPage() {
   const { data: list, error, reload } = useFetch<FollowUp[]>("/api/reception/followups?days=365");
   const { data: providers } = useFetch<{ user_id: string; display_name: string }[]>(can("appointments.write") ? "/api/providers" : null);
   const [provider, setProvider] = useState("");
+  const [booked, setBooked] = useState<{ id: string; text: string } | null>(null);
+  const [onlyThis, setOnlyThis] = useState(true);
+  const rowRef = useRef<HTMLTableRowElement | null>(null);
+  const confirmRef = useRef<HTMLDivElement | null>(null);
   // Minimum date for the picker. Wall-clock time can't be read during prerender, so it is set once mounted.
   const [today, setToday] = useState("");
   useEffect(() => {
     const t = setTimeout(() => setToday(new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 10)), 0);
     return () => clearTimeout(t);
   }, []);
+
+  const single = onlyThis && !!patient; // one patient's list: the Patient and UHID columns would only repeat the header
+  const shown = (list ?? []).filter(x => !(onlyThis && patient) || !x.patient_id || x.patient_id === patient.patient_id);
 
   async function setStatus(x: FollowUp, status: "COMPLETED" | "CANCELLED") {
     if (!x.appointment_id) return;
@@ -44,10 +52,13 @@ export default function AppointmentsPage() {
     if (!date || !time) return toast("Choose a date and time");
     if (new Date(`${date}T${time}`).getTime() < Date.now() - 5 * 60_000) return toast("The appointment cannot be in the past");
     try {
-      await api(`/api/patients/${patient!.patient_id}/appointments`, { body: { appointmentAt: new Date(`${date}T${time}`).toISOString(), type, reason, providerUser: provider || null } });
+      const when = new Date(`${date}T${time}`);
+      const made = await api<{ appointment_id: string }>(`/api/patients/${patient!.patient_id}/appointments`, { body: { appointmentAt: when.toISOString(), type, reason, providerUser: provider || null } });
+      const doc = providers?.find(p => p.user_id === provider)?.display_name;
+      setBooked({ id: made.appointment_id, text: `${patient!.name} · ${fmtDateTime(when.toISOString())} · ${type.toLowerCase()}${doc ? ` · ${doc}` : ""}` });
       setReason("");
-      toast("Appointment saved centrally");
       reload();
+      setTimeout(() => confirmRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 100);
     } catch (e) {
       toast(errMsg(e));
     }
@@ -55,8 +66,18 @@ export default function AppointmentsPage() {
 
   return (
     <>
-      <PageHead title="Appointments / Follow-up" subtitle="Appointments are saved centrally and visible to Reception." />
+      <PageHead title="Appointments / Follow-up" subtitle="Book a visit for the open patient, and see who is coming next." />
       <PatientBar />
+      {booked && (
+        <div ref={confirmRef} role="status" className="mb-5 rounded-2xl bg-good-soft p-5 text-good">
+          <div className="font-semibold">Appointment booked</div>
+          <div className="mt-1 text-sm">{booked.text}</div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button onClick={() => { setBooked(null); setDate(""); setTime(""); }}>Book another</Button>
+            {can("billing.read") && <Link href="/billing"><Button>Go to Billing</Button></Link>}
+          </div>
+        </div>
+      )}
       {!can("appointments.write") ? null : patient ? (
         <Card>
           <Grid cols={4}>
@@ -80,12 +101,15 @@ export default function AppointmentsPage() {
       ) : (
         <Card><Empty>Open a patient in Reception to book an appointment.</Empty></Card>
       )}
-      <Card title="Upcoming appointments">
-        {error ? <Empty>Could not load appointments: {error}</Empty> : list === null ? <Empty>Loading…</Empty> : list.length ? (
-          <Table head={can("appointments.write") ? ["Date/time", "Patient", "UHID", "Type", "Reason", ""] : ["Date/time", "Patient", "UHID", "Type", "Reason"]}>
-            {list.map((x, i) => (
-              <tr key={x.appointment_id ?? i}>
-                <Td>{fmtDateTime(x.appointment_at)}</Td><Td>{x.name}</Td><Td>{x.uhid}</Td><Td>{x.type}</Td><Td>{x.reason}</Td>
+      <Card
+        title="Upcoming appointments"
+        aside={patient ? <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-2"><input type="checkbox" checked={onlyThis} onChange={e => setOnlyThis(e.target.checked)} className="h-4 w-4 accent-[var(--color-brand)]" /> Only {patient.name}</label> : undefined}
+      >
+        {error ? <Empty>Could not load appointments: {error}</Empty> : list === null ? <Empty>Loading…</Empty> : shown.length ? (
+          <Table head={[...(single ? ["Date/time"] : ["Date/time", "Patient", "UHID"]), "Type", "Doctor", "Reason", ...(can("appointments.write") ? [""] : [])]}>
+            {shown.map((x, i) => (
+              <tr key={x.appointment_id ?? i} ref={x.appointment_id === booked?.id ? rowRef : undefined} className={x.appointment_id === booked?.id ? "[&>td]:bg-good-soft" : undefined}>
+                <Td>{fmtDateTime(x.appointment_at)}</Td>{!single && <><Td>{x.name}</Td><Td>{x.uhid}</Td></>}<Td>{x.type}</Td><Td>{x.provider_name || "—"}</Td><Td>{x.reason}</Td>
                 {can("appointments.write") && (
                   <Td>
                     <span className="flex gap-1.5">
@@ -97,7 +121,7 @@ export default function AppointmentsPage() {
               </tr>
             ))}
           </Table>
-        ) : <Empty>No upcoming appointments.</Empty>}
+        ) : <Empty>{onlyThis && patient ? "No upcoming appointments for this patient." : "No upcoming appointments."}</Empty>}
       </Card>
     </>
   );

@@ -55,7 +55,8 @@ export function Empty({ children }: { children: ReactNode }) {
 }
 
 export function Grid({ cols, children }: { cols: 2 | 3 | 4; children: ReactNode }) {
-  const c = { 2: "md:grid-cols-2", 3: "md:grid-cols-3", 4: "md:grid-cols-4" }[cols];
+  // Two columns on medium screens, the full count only on wide ones, so date/time/select boxes stay readable.
+  const c = { 2: "md:grid-cols-2", 3: "md:grid-cols-2 xl:grid-cols-3", 4: "md:grid-cols-2 xl:grid-cols-4" }[cols];
   return <div className={`grid grid-cols-1 gap-4 ${c}`}>{children}</div>;
 }
 

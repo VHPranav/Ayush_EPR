@@ -593,8 +593,9 @@ app.get('/api/audit', auth, requirePerm('audit.read'), async (_req, res) => {
 app.get('/api/reception/followups', auth, requirePerm('appointments.read'), async (req, res) => {
   const days = Math.min(Number(req.query.days || 30), 365);
   const { rows } = await pool.query(
-    `SELECT a.*,p.uhid,p.name,p.patient_id FROM appointments a
+    `SELECT a.*,p.uhid,p.name,p.patient_id,pu.display_name AS provider_name FROM appointments a
      JOIN patients p ON p.patient_id=a.patient_id
+     LEFT JOIN users pu ON pu.user_id=a.provider_user
      WHERE a.reception_reminder AND a.status='SCHEDULED' AND a.appointment_at BETWEEN now() AND now()+($1||' days')::interval
      ORDER BY a.appointment_at`,
     [days]
