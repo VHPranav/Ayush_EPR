@@ -1,4 +1,5 @@
 "use client";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -68,6 +69,7 @@ function Record() {
 function AssessmentForm({ latest, nurseVitals, patient }: { latest?: ClinicalRecord; nurseVitals?: ClinicalRecord; patient: Patient }) {
   const { refresh } = usePatient();
   const { can } = useAuth();
+  const router = useRouter();
   const canWrite = can("clinical.write");
   const toast = useToast();
   // Vitals a nurse recorded after the last assessment pre-fill the form (the doctor can still edit them).
@@ -100,7 +102,13 @@ function AssessmentForm({ latest, nurseVitals, patient }: { latest?: ClinicalRec
       setDirty(false);
       setSavedAt(new Date().toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false }));
       await refresh();
-      toast("Clinical record saved centrally");
+      // Prescribers go straight on to the prescription; others (nurses, therapists) stay here.
+      if (can("prescriptions.write")) {
+        toast("Clinical record saved. Now write the prescription.");
+        router.push("/prescription");
+      } else {
+        toast("Clinical record saved centrally");
+      }
     } catch (e) {
       toast(errMsg(e));
     }

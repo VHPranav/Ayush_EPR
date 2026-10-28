@@ -127,12 +127,14 @@ export const DEMO_USERS = [
   { username: "auditor", name: "Tom Becker", roles: ["AUDITOR"], blurb: "Audit log only" },
 ] as const;
 
-const TREATMENTS: [string, string, string, string][] = [
-  ["Abhyanga", "Snehana", "Once daily", "7 days"], ["Shirodhara", "Panchakarma", "Once daily", "14 days"],
-  ["Shirovasti", "Panchakarma", "Once daily", "7 days"], ["Vasti", "Panchakarma", "Once daily", "8 days"],
-  ["Nasyam", "Panchakarma", "Once daily", "7 days"], ["Pizhichil", "Panchakarma", "Once daily", "14 days"],
-  ["Kizhi", "Svedana", "Once daily", "7 days"], ["Talapothichil", "Panchakarma", "Once daily", "7 days"],
-  ["Swedana", "Svedana", "Once daily", "3 days"],
+// name, category, default frequency, default duration, rate per session/visit (sample prices)
+const TREATMENTS: [string, string, string, string, number][] = [
+  ["First consultation", "Consultation", "Once", "1 visit", 800], ["Follow-up consultation", "Consultation", "Once", "1 visit", 500],
+  ["Abhyanga", "Snehana", "Once daily", "7 days", 1500], ["Shirodhara", "Panchakarma", "Once daily", "14 days", 2200],
+  ["Shirovasti", "Panchakarma", "Once daily", "7 days", 2000], ["Vasti", "Panchakarma", "Once daily", "8 days", 1800],
+  ["Nasyam", "Panchakarma", "Once daily", "7 days", 900], ["Pizhichil", "Panchakarma", "Once daily", "14 days", 3500],
+  ["Kizhi", "Svedana", "Once daily", "7 days", 1600], ["Talapothichil", "Panchakarma", "Once daily", "7 days", 1200],
+  ["Swedana", "Svedana", "Once daily", "3 days", 700],
 ];
 
 export function buildDemo(now: number): DemoDb {
@@ -145,7 +147,7 @@ export function buildDemo(now: number): DemoDb {
   const db: DemoDb = {
     patients: [], summaries: [], timeline: {}, problems: {}, allergies: {}, medrec: {}, outcomes: {}, investigations: {},
     referrals: {}, carePlans: {}, sessions: {}, documents: {}, billing: {}, discharge: {},
-    treatments: TREATMENTS.map(([name, category, f, d], i) => ({ treatment_id: `demo-t${i + 1}`, name, category, default_frequency: f, default_duration: d })),
+    treatments: TREATMENTS.map(([name, category, f, d, rate], i) => ({ treatment_id: `demo-t${i + 1}`, name, category, default_frequency: f, default_duration: d, rate })),
     stock: [], followups: [], audit: [], users: [],
   };
 
@@ -225,16 +227,16 @@ export function buildDemo(now: number): DemoDb {
     return { appointment_at: d.toISOString(), name: c.name, uhid: `AY-2026-${String(i + 1).padStart(5, "0")}`, type: types[i % 4], reason: i % 4 === 1 ? c.therapy.split(" with ")[0] : "Review progress" };
   }).sort((a, b) => +new Date(a.appointment_at) - +new Date(b.appointment_at));
 
-  // Pharmacy stock (two low, one expiring soon, one already expired)
-  const stock: [string, string, string, number, number, string, number][] = [
-    ["Ashwagandha churna", "Powder", "AC-2412", 42, 20, "kg", 400], ["Triphala churna", "Powder", "TC-2409", 8, 15, "kg", 220],
-    ["Brahmi ghrita", "Ghee", "BG-2503", 31, 12, "jar", 300], ["Dashamoola kwatha", "Decoction", "DK-2501", 5, 10, "bottle", 18],
-    ["Mahanarayana taila", "Oil", "MT-2407", 24, 10, "bottle", 12], ["Dhanwantaram taila", "Oil", "DT-2411", 18, 8, "bottle", -3],
-    ["Chyawanprash", "Paste", "CP-2506", 60, 25, "jar", 540], ["Arogyavardhini vati", "Tablet", "AV-2504", 120, 50, "strip", 380],
-    ["Saraswatarishta", "Asava", "SA-2502", 14, 6, "bottle", 9], ["Kshirabala taila", "Oil", "KT-2410", 22, 8, "bottle", 260],
+  // Pharmacy stock (two low, one expiring soon, one already expired); the last number is a sample selling price per unit
+  const stock: [string, string, string, number, number, string, number, number][] = [
+    ["Ashwagandha churna", "Powder", "AC-2412", 42, 20, "kg", 400, 1400], ["Triphala churna", "Powder", "TC-2409", 8, 15, "kg", 220, 900],
+    ["Brahmi ghrita", "Ghee", "BG-2503", 31, 12, "jar", 300, 650], ["Dashamoola kwatha", "Decoction", "DK-2501", 5, 10, "bottle", 18, 240],
+    ["Mahanarayana taila", "Oil", "MT-2407", 24, 10, "bottle", 12, 320], ["Dhanwantaram taila", "Oil", "DT-2411", 18, 8, "bottle", -3, 280],
+    ["Chyawanprash", "Paste", "CP-2506", 60, 25, "jar", 540, 450], ["Arogyavardhini vati", "Tablet", "AV-2504", 120, 50, "strip", 380, 120],
+    ["Saraswatarishta", "Asava", "SA-2502", 14, 6, "bottle", 9, 210], ["Kshirabala taila", "Oil", "KT-2410", 22, 8, "bottle", 260, 300],
   ];
-  db.stock = stock.map(([medicine_name, form, batch_no, quantity, reorder_level, unit, expDays], i) => ({
-    stock_id: `demo-st${i + 1}`, medicine_name, form, batch_no, expiry_date: ymd(expDays), quantity, unit, reorder_level, low_stock: quantity <= reorder_level,
+  db.stock = stock.map(([medicine_name, form, batch_no, quantity, reorder_level, unit, expDays, sale_price], i) => ({
+    stock_id: `demo-st${i + 1}`, medicine_name, form, batch_no, expiry_date: ymd(expDays), quantity, unit, reorder_level, low_stock: quantity <= reorder_level, sale_price,
   }));
 
   // Audit trail (last ~36 hours)

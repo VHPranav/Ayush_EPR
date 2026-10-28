@@ -2,13 +2,15 @@
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { errMsg } from "@/lib/format";
+import { errMsg, money } from "@/lib/format";
 import { useToast } from "@/lib/toast";
 import { useFetch } from "@/lib/use-fetch";
 import type { TreatmentMaster } from "@/lib/types";
 import { AreaField, Button, Card, Empty, Grid, PageHead, Table, TextField, Td } from "@/components/ui";
 
-const blank = { name: "", category: "", frequency: "", duration: "", instructions: "" };
+const blank = { name: "", category: "", frequency: "", duration: "", rate: "", instructions: "" };
+// Suggested categories; the invoice uses the category to group lines (consultations are entries here too).
+const CATEGORIES = ["Consultation", "Panchakarma", "Therapy", "Yoga", "Physiotherapy", "Diet", "Procedure", "Other"];
 
 export default function TreatmentMasterPage() {
   const toast = useToast();
@@ -34,7 +36,7 @@ export default function TreatmentMasterPage() {
 
   function startEdit(x: TreatmentMaster) {
     setEditing(x.treatment_id);
-    setF({ name: x.name, category: x.category ?? "", frequency: x.default_frequency ?? "", duration: x.default_duration ?? "", instructions: x.instructions ?? "" });
+    setF({ name: x.name, category: x.category ?? "", frequency: x.default_frequency ?? "", duration: x.default_duration ?? "", rate: x.rate == null ? "" : String(x.rate), instructions: x.instructions ?? "" });
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -54,15 +56,17 @@ export default function TreatmentMasterPage() {
 
   return (
     <>
-      <PageHead title="Treatment Master" subtitle="Central catalogue used by prescription." />
+      <PageHead title="Treatment Master" subtitle="Central catalogue used by prescription and billing. Each rate is the fixed price billed per session or visit." />
       {can("treatments.write") && (
       <Card title={editing ? "Edit treatment" : "Add treatment"}>
         <Grid cols={4}>
           <TextField label="Name*" value={f.name} onChange={set("name")} />
-          <TextField label="Category" value={f.category} onChange={set("category")} />
+          <TextField label="Category" value={f.category} onChange={set("category")} list="treatment-categories" placeholder="Choose or type" />
           <TextField label="Default frequency" value={f.frequency} onChange={set("frequency")} />
           <TextField label="Default duration" value={f.duration} onChange={set("duration")} />
         </Grid>
+        <datalist id="treatment-categories">{CATEGORIES.map(c => <option key={c} value={c} />)}</datalist>
+        <div className="max-w-xs"><TextField label="Rate per session / visit" type="number" min={0} step="0.01" value={f.rate} onChange={set("rate")} /></div>
         <AreaField label="Description/instructions" value={f.instructions} onChange={set("instructions")} />
         <div className="flex gap-2">
           <Button variant="primary" onClick={save}>{editing ? "Update treatment" : "Add treatment"}</Button>
@@ -72,10 +76,10 @@ export default function TreatmentMasterPage() {
       )}
       <Card>
         {error ? <Empty>Could not load: {error}</Empty> : list === null ? <Empty>Loading…</Empty> : list.length ? (
-          <Table head={canEdit ? ["Name", "Category", "Frequency", "Duration", ""] : ["Name", "Category", "Frequency", "Duration"]}>
+          <Table head={canEdit ? ["Name", "Category", "Frequency", "Duration", "Rate", ""] : ["Name", "Category", "Frequency", "Duration", "Rate"]}>
             {list.map(x => (
               <tr key={x.treatment_id}>
-                <Td>{x.name}</Td><Td>{x.category || "—"}</Td><Td>{x.default_frequency || "—"}</Td><Td>{x.default_duration || "—"}</Td>
+                <Td>{x.name}</Td><Td>{x.category || "—"}</Td><Td>{x.default_frequency || "—"}</Td><Td>{x.default_duration || "—"}</Td><Td>{x.rate == null ? "—" : money(Number(x.rate))}</Td>
                 {canEdit && <Td><span className="flex gap-1.5"><Button onClick={() => startEdit(x)}>Edit</Button>{canDelete && <Button variant="danger" onClick={() => remove(x)}>Remove</Button>}</span></Td>}
               </tr>
             ))}

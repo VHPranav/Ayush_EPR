@@ -104,12 +104,18 @@ export interface StockItem {
   stock_id: string;
   medicine_name: string; form: string | null; strength?: string | null; batch_no: string | null; expiry_date: string | null;
   quantity: number | string; unit: string | null; reorder_level: number | string; supplier?: string | null; location?: string | null;
+  sale_price?: number | string | null;
   low_stock?: boolean; expired?: boolean;
 }
 export interface TreatmentMaster {
   treatment_id: string; name: string; category: string | null;
   default_frequency: string | null; default_duration: string | null; instructions?: string | null;
+  rate?: number | string | null;
 }
+/** One pick-list entry for invoices: a treatment/consultation or a medicine, at its fixed rate. */
+export interface CatalogItem { name: string; category?: string | null; rate: number | string | null }
+export interface BillingCatalog { treatments: CatalogItem[]; medicines: CatalogItem[] }
+export interface Billable { since: string | null; medicines: (CatalogItem & { quantity: number | string })[]; sessions: (CatalogItem & { quantity: number | string })[] }
 export interface FollowUp { provider_user?: string | null; provider_name?: string | null; appointment_id?: string; patient_id?: string; appointment_at: string; name: string; uhid: string; type: string | null; reason: string | null }
 export interface InvoiceRow { id: string; invoice_number: string; account_date: string; status: string; total: number | string; payer_type: string | null; patient_id: string; name: string; uhid: string }
 export interface InvoiceSummary { open_count: number; open_total: number | string; invoiced_month: number | string; paid_month: number | string }

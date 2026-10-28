@@ -26,6 +26,8 @@ const READ_PERMS: [RegExp, Perm][] = [
   [/^\/api\/patients\/[^/]+\/allergies$/, "allergies.read"],
   [/^\/api\/patients\/[^/]+\/medication-reconciliation$/, "medrec.read"],
   [/^\/api\/patients\/[^/]+\/billing$/, "billing.read"],
+  [/^\/api\/patients\/[^/]+\/billable$/, "billing.write"],
+  [/^\/api\/billing\/catalog$/, "billing.write"],
   [/^\/api\/patients\/[^/]+\/documents$/, "documents.read"],
   [/^\/api\/pharmacy\/stock$/, "pharmacy.read"],
   [/^\/api\/treatment-master$/, "treatments.read"],
@@ -105,6 +107,9 @@ export async function demoRequest<T>(path: string, method: string, body: unknown
     return { summary: { open_count: open.length, open_total: sum(open), invoiced_month: sum(all.filter(b => b.status !== "VOID")), paid_month: sum(all.filter(b => b.status === "PAID")) }, invoices } as T;
   }
   if (route === "/api/users") return d.users as T;
+  if (route === "/api/billing/catalog") {
+    return { treatments: d.treatments.map(t => ({ name: t.name, category: t.category, rate: t.rate ?? null })), medicines: d.stock.map(s => ({ name: s.medicine_name, rate: s.sale_price ?? null })) } as T;
+  }
   if (route === "/api/reception/followups") {
     const days = Math.min(Number(url.searchParams.get("days") ?? 30), 365);
     const end = Date.now() + days * 86_400_000;
@@ -138,7 +143,17 @@ export async function demoRequest<T>(path: string, method: string, body: unknown
     case "care-plans": return d.carePlans[pid] as T;
     case "treatment-sessions": return d.sessions[pid] as T;
     case "documents": return d.documents[pid] as T;
-    case "billing": return { accounts: d.billing[pid], items: [] } as T;
+    case "billing": {
+      // One summary line per sample invoice, so Details and Print have something to show.
+      const accounts = d.billing[pid] ?? [];
+      return { accounts: accounts.map(a => ({ ...a, subtotal: a.total, discount: 0, tax: 0 })), items: accounts.map(a => ({ id: `${a.id}-i1`, account_id: a.id, description: "Consultation and therapy", category: "Treatment", quantity: 1, unit_price: a.total, amount: a.total })) } as T;
+    }
+    case "billable": {
+      // Sample "since the last invoice": the patient's recorded therapy sessions and one dispensed medicine.
+      const t = d.treatments.find(x => x.category === "Panchakarma");
+      const m = d.stock[0];
+      return { since: null, sessions: t ? [{ name: t.name, category: t.category, rate: t.rate ?? null, quantity: (d.sessions[pid] ?? []).length || 1 }] : [], medicines: m ? [{ name: m.medicine_name, rate: m.sale_price ?? null, quantity: 1 }] : [] } as T;
+    }
     case "discharge": return d.discharge[pid] as T;
     default: throw new ApiError("API route not found", 404);
   }

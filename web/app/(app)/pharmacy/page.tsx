@@ -8,7 +8,7 @@ import { useFetch } from "@/lib/use-fetch";
 import type { StockItem } from "@/lib/types";
 import { Button, Card, Empty, Grid, PageHead, Pill, Table, TextField, Td } from "@/components/ui";
 
-const blank = { medicineName: "", form: "", strength: "", batchNo: "", expiryDate: "", quantity: "", unit: "", reorderLevel: "", supplier: "", location: "" };
+const blank = { medicineName: "", form: "", strength: "", batchNo: "", expiryDate: "", quantity: "", unit: "", reorderLevel: "", supplier: "", location: "", salePrice: "" };
 
 export default function PharmacyPage() {
   const toast = useToast();
@@ -50,6 +50,7 @@ export default function PharmacyPage() {
     setF({
       medicineName: x.medicine_name, form: x.form ?? "", strength: x.strength ?? "", batchNo: x.batch_no ?? "", expiryDate: x.expiry_date ?? "",
       quantity: String(x.quantity), unit: x.unit ?? "", reorderLevel: String(x.reorder_level), supplier: x.supplier ?? "", location: x.location ?? "",
+      salePrice: x.sale_price == null ? "" : String(x.sale_price),
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -94,9 +95,10 @@ export default function PharmacyPage() {
           <TextField label="Unit" value={f.unit} onChange={set("unit")} />
           <TextField label="Reorder level" type="number" step="0.001" value={f.reorderLevel} onChange={set("reorderLevel")} />
         </Grid>
-        <Grid cols={2}>
+        <Grid cols={3}>
           <TextField label="Supplier" value={f.supplier} onChange={set("supplier")} />
           <TextField label="Location" value={f.location} onChange={set("location")} />
+          <TextField label="Selling price per unit" type="number" min={0} step="0.01" value={f.salePrice} onChange={set("salePrice")} />
         </Grid>
         <div className="flex gap-2">
           <Button variant="primary" onClick={save}>{editing ? "Update stock" : "Save stock"}</Button>

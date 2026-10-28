@@ -1,7 +1,7 @@
 "use client";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { errMsg } from "@/lib/format";
@@ -12,7 +12,10 @@ import type { CalAppt, PatientSummary } from "@/lib/types";
 import { useFetch } from "@/lib/use-fetch";
 import { Button, Field, Input, Modal, Pill, Select } from "./ui";
 
-const START_H = 7, END_H = 20, HOUR_H = 84; // tall enough that a 30-minute appointment fits two lines of text
+const START_H = 7, END_H = 20;
+// Hour height is sized so the whole day fits the screen without scrolling; kept within these bounds
+// (84px lets a 30-minute appointment show two lines; below 24px half-hour slots get too small to click).
+const MIN_HOUR_H = 24, MAX_HOUR_H = 84, GRID_HEAD_H = 40, BOTTOM_GAP = 2;
 const TYPES = ["FOLLOW-UP", "CONSULTATION", "THERAPY", "REVIEW"];
 const LENGTHS = [15, 30, 45, 60, 90, 120];
 const TYPE_STYLE: Record<string, string> = {
@@ -79,6 +82,43 @@ export function AppointmentCalendar() {
   const [selected, setSelected] = useState<CalAppt | null>(null);
   const [crowd, setCrowd] = useState<CalAppt[] | null>(null);
   const [slot, setSlot] = useState<{ date: string; time: string; provider: string } | null>(null);
+
+  // Height the grid can take so its scrolling container (the page's main area) needs no scrolling:
+  // the container's visible height minus everything above the grid and everything below it (paddings, card edge).
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [fitH, setFitH] = useState(0);
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    let sp: HTMLElement = document.documentElement;
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      if (/(auto|scroll)/.test(getComputedStyle(p).overflowY)) { sp = p; break; }
+    }
+    const measure = () => {
+      const g = el.getBoundingClientRect(), s = sp === document.documentElement ? { top: 0 } : sp.getBoundingClientRect();
+      const above = g.top - s.top + sp.scrollTop;
+      // Space under the grid, read from layout (scrollHeight stops reporting it once content fits). A bottom margin that
+      // sits flush with its parent's edge (like the card's) collapses outward, so the parent's box doesn't include it.
+      let below = 0, n: HTMLElement = el;
+      for (; n.parentElement && n.parentElement !== sp; n = n.parentElement) {
+        const gap = n.parentElement.getBoundingClientRect().bottom - n.getBoundingClientRect().bottom;
+        below += gap + (gap < 1 ? parseFloat(getComputedStyle(n).marginBottom) : 0);
+      }
+      below += parseFloat(getComputedStyle(n).marginBottom) + parseFloat(getComputedStyle(sp).paddingBottom);
+      // A horizontal scrollbar (week view on narrower screens) takes height from the grid too.
+      const scrollbar = el.offsetHeight - el.clientHeight;
+      setFitH(Math.floor(sp.clientHeight - above - below - scrollbar - BOTTOM_GAP));
+    };
+    measure();
+    // Re-measure when the scrolling area itself resizes (window resize, a bar appearing above it) or when anything
+    // beside the grid changes height (e.g. the title and doctor list arriving).
+    const ro = new ResizeObserver(measure);
+    ro.observe(sp);
+    if (el.parentElement) ro.observe(el.parentElement);
+    return () => ro.disconnect();
+  }, [view]);
+  const hourH = fitH ? Math.min(MAX_HOUR_H, Math.max(MIN_HOUR_H, (fitH - GRID_HEAD_H) / (END_H - START_H))) : MAX_HOUR_H;
+  const monthRowH = fitH ? Math.max(64, (fitH - 34) / 6) : 92;
 
   // Wall-clock time can't be read during prerender: "today" is set once mounted. Doctors start on their own day.
   useEffect(() => {
@@ -162,13 +202,13 @@ export function AppointmentCalendar() {
       {error ? <p className="text-sm text-danger">Could not load appointments: {error}</p> : null}
 
       {view === "month" ? (
-        <div className="grid grid-cols-7 overflow-hidden rounded-xl border border-line text-sm">
+        <div ref={gridRef} className="grid grid-cols-7 overflow-hidden rounded-xl border border-line text-sm">
           {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(d => <div key={d} className="bg-subtle px-2 py-2 text-center text-xs font-medium text-muted">{d}</div>)}
           {Array.from({ length: 42 }, (_, i) => addDays(range[0], i)).map(d => {
             const items = shown.filter(a => sameDay(new Date(a.appointment_at), d) && a.status !== "CANCELLED");
             return (
-              <button key={ymd(d)} type="button" onClick={() => { setAnchor(d); setView("day"); }}
-                className={`min-h-[92px] border-t border-l border-line p-1.5 text-left align-top hover:bg-subtle ${d.getMonth() !== cur.getMonth() ? "bg-subtle/60 text-muted" : ""}`}>
+              <button key={ymd(d)} type="button" onClick={() => { setAnchor(d); setView("day"); }} style={{ height: monthRowH }}
+                className={`overflow-hidden border-t border-l border-line p-1.5 text-left align-top hover:bg-subtle ${d.getMonth() !== cur.getMonth() ? "bg-subtle/60 text-muted" : ""}`}>
                 <span className={`mb-1 inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium ${ready && sameDay(d, today) ? "bg-brand text-white" : ""}`}>{d.getDate()}</span>
                 {items.slice(0, 3).map(a => <span key={a.appointment_id} className={`mb-0.5 block truncate rounded border-l-2 px-1 text-[11px] ${TYPE_STYLE[a.type ?? ""] ?? "border-line-strong bg-hover"}`}>{hhmm(new Date(a.appointment_at))} {a.name}</span>)}
                 {items.length > 3 && <span className="text-[11px] text-muted">+{items.length - 3} more</span>}
@@ -177,7 +217,7 @@ export function AppointmentCalendar() {
           })}
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-line">
+        <div ref={gridRef} className="overflow-x-auto rounded-xl border border-line">
           <div style={{ minWidth: 56 + columns.length * (view === "day" ? 200 : 130) }}>
             <div className="flex border-b border-line bg-subtle">
               <div className="w-14 shrink-0" />
@@ -187,25 +227,25 @@ export function AppointmentCalendar() {
             </div>
             <div className="flex">
               <div className="w-14 shrink-0">
-                {Array.from({ length: END_H - START_H }, (_, i) => <div key={i} style={{ height: HOUR_H }} className="pr-2 text-right text-[11px] text-muted"><span className="relative -top-2">{String(START_H + i).padStart(2, "0")}:00</span></div>)}
+                {Array.from({ length: END_H - START_H }, (_, i) => <div key={i} style={{ height: hourH }} className="pr-2 text-right text-[11px] text-muted"><span className="relative -top-2">{String(START_H + i).padStart(2, "0")}:00</span></div>)}
               </div>
               {columns.map(c => (
-                <div key={c.key} role="presentation" style={{ height: (END_H - START_H) * HOUR_H, backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent ${HOUR_H / 2 - 1}px, var(--color-line) ${HOUR_H / 2 - 1}px, var(--color-line) ${HOUR_H / 2}px)` }}
+                <div key={c.key} role="presentation" style={{ height: (END_H - START_H) * hourH, backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent ${hourH / 2 - 1}px, var(--color-line) ${hourH / 2 - 1}px, var(--color-line) ${hourH / 2}px)` }}
                   className={`relative flex-1 border-l border-line ${canWrite ? "cursor-pointer hover:bg-subtle/50" : ""}`}
-                  onClick={e => { const r = e.currentTarget.getBoundingClientRect(); const mins = Math.floor(((e.clientY - r.top) / HOUR_H) * 2) * 30; book(c.date, mins, c.provider); }}>
+                  onClick={e => { const r = e.currentTarget.getBoundingClientRect(); const mins = Math.floor(((e.clientY - r.top) / hourH) * 2) * 30; book(c.date, mins, c.provider); }}>
                   {ready && sameDay(c.date, today) && today.getHours() >= START_H && today.getHours() < END_H && (
-                    <div className="pointer-events-none absolute left-0 right-0 z-10 border-t-2 border-danger" style={{ top: ((today.getHours() * 60 + today.getMinutes() - START_H * 60) / 60) * HOUR_H }} />
+                    <div className="pointer-events-none absolute left-0 right-0 z-10 border-t-2 border-danger" style={{ top: ((today.getHours() * 60 + today.getMinutes() - START_H * 60) / 60) * hourH }} />
                   )}
                   {(() => {
                     const { drawn, more } = visibleLayout(c.items, view === "week" ? 1 : 2);
-                    const yOf = (t: number) => { const d = new Date(t); return ((d.getHours() * 60 + d.getMinutes() - START_H * 60) / 60) * HOUR_H; };
+                    const yOf = (t: number) => { const d = new Date(t); return ((d.getHours() * 60 + d.getMinutes() - START_H * 60) / 60) * hourH; };
                     return (
                       <>
                         {drawn.map(({ a, lane, lanes }) => {
                           const s = new Date(a.appointment_at);
                           const top = yOf(+s);
-                          if (top < -HOUR_H || top > (END_H - START_H) * HOUR_H) return null;
-                          const h = Math.max((a.duration_minutes / 60) * HOUR_H - 2, 24);
+                          if (top < -hourH || top > (END_H - START_H) * hourH) return null;
+                          const h = Math.max((a.duration_minutes / 60) * hourH - 2, 24);
                           const sub = [a.type?.toLowerCase(), view === "week" ? a.provider_name : null].filter(Boolean).join(" · ");
                           return (
                             <button key={a.appointment_id} type="button" title={`${hhmm(s)} ${a.name}${a.provider_name ? ` · ${a.provider_name}` : ""}`} onClick={e => { e.stopPropagation(); setSelected(a); }}

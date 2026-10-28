@@ -427,11 +427,11 @@ const needText = (res, v, label) => hasText(v) ? false : (res.status(400).json({
 app.post('/api/pharmacy/stock', auth, requirePerm('pharmacy.write'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
   if (needText(res, b.medicineName, 'Medicine name')) return;
-  if (![b.quantity, b.reorderLevel, b.purchasePrice].every(nonNeg)) return res.status(400).json({ error: 'Quantity, reorder level and price cannot be negative' });
+  if (![b.quantity, b.reorderLevel, b.purchasePrice, b.salePrice].every(nonNeg)) return res.status(400).json({ error: 'Quantity, reorder level and prices cannot be negative' });
   const { rows } = await c.query(
-    `INSERT INTO pharmacy_stock(medicine_id,medicine_name,form,strength,batch_no,expiry_date,quantity,unit,reorder_level,supplier,purchase_price,location)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-    [b.medicineId || null, b.medicineName, b.form || null, b.strength || null, b.batchNo || null, b.expiryDate || null, b.quantity || 0, b.unit || null, b.reorderLevel || 0, b.supplier || null, missing(b.purchasePrice) ? null : Number(b.purchasePrice), b.location || null]
+    `INSERT INTO pharmacy_stock(medicine_id,medicine_name,form,strength,batch_no,expiry_date,quantity,unit,reorder_level,supplier,purchase_price,location,sale_price)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+    [b.medicineId || null, b.medicineName, b.form || null, b.strength || null, b.batchNo || null, b.expiryDate || null, b.quantity || 0, b.unit || null, b.reorderLevel || 0, b.supplier || null, missing(b.purchasePrice) ? null : Number(b.purchasePrice), b.location || null, missing(b.salePrice) ? null : Number(b.salePrice)]
   );
   await audit(req, 'CREATE_STOCK', 'pharmacy_stock', rows[0].stock_id);
   res.status(201).json(rows[0]);
@@ -440,10 +440,10 @@ app.post('/api/pharmacy/stock', auth, requirePerm('pharmacy.write'), transaction
 app.put('/api/pharmacy/stock/:id', auth, requirePerm('pharmacy.write'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
   if (needText(res, b.medicineName, 'Medicine name')) return;
-  if (![b.quantity, b.reorderLevel, b.purchasePrice].every(nonNeg)) return res.status(400).json({ error: 'Quantity, reorder level and price cannot be negative' });
+  if (![b.quantity, b.reorderLevel, b.purchasePrice, b.salePrice].every(nonNeg)) return res.status(400).json({ error: 'Quantity, reorder level and prices cannot be negative' });
   const { rows } = await c.query(
-    `UPDATE pharmacy_stock SET medicine_name=$1,form=$2,strength=$3,batch_no=$4,expiry_date=$5,quantity=$6,unit=$7,reorder_level=$8,supplier=$9,purchase_price=$10,location=$11,updated_at=now() WHERE stock_id=$12 RETURNING *`,
-    [b.medicineName, b.form || null, b.strength || null, b.batchNo || null, b.expiryDate || null, b.quantity || 0, b.unit || null, b.reorderLevel || 0, b.supplier || null, missing(b.purchasePrice) ? null : Number(b.purchasePrice), b.location || null, req.params.id]
+    `UPDATE pharmacy_stock SET medicine_name=$1,form=$2,strength=$3,batch_no=$4,expiry_date=$5,quantity=$6,unit=$7,reorder_level=$8,supplier=$9,purchase_price=$10,location=$11,sale_price=$12,updated_at=now() WHERE stock_id=$13 RETURNING *`,
+    [b.medicineName, b.form || null, b.strength || null, b.batchNo || null, b.expiryDate || null, b.quantity || 0, b.unit || null, b.reorderLevel || 0, b.supplier || null, missing(b.purchasePrice) ? null : Number(b.purchasePrice), b.location || null, missing(b.salePrice) ? null : Number(b.salePrice), req.params.id]
   );
   if (!rows[0]) return res.status(404).json({ error: 'Stock item not found' });
   await audit(req, 'UPDATE_STOCK', 'pharmacy_stock', rows[0].stock_id);
@@ -485,9 +485,10 @@ app.get('/api/pharmacy/stock', auth, requirePerm('pharmacy.read'), async (_req, 
 app.post('/api/treatment-master', auth, requirePerm('treatments.write'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
   if (needText(res, b.name, 'Treatment name')) return;
+  if (!nonNeg(b.rate)) return res.status(400).json({ error: 'Rate cannot be negative' });
   const { rows } = await c.query(
-    'INSERT INTO treatment_master(name,category,default_frequency,default_duration,practitioner,instructions,precautions) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',
-    [b.name, b.category || null, b.frequency || null, b.duration || null, b.practitioner || null, b.instructions || null, b.precautions || null]
+    'INSERT INTO treatment_master(name,category,default_frequency,default_duration,practitioner,instructions,precautions,rate) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
+    [b.name, b.category || null, b.frequency || null, b.duration || null, b.practitioner || null, b.instructions || null, b.precautions || null, missing(b.rate) ? null : Number(b.rate)]
   );
   await audit(req, 'CREATE_TREATMENT', 'treatment_master', rows[0].treatment_id);
   res.status(201).json(rows[0]);
@@ -496,9 +497,10 @@ app.post('/api/treatment-master', auth, requirePerm('treatments.write'), transac
 app.put('/api/treatment-master/:id', auth, requirePerm('treatments.write'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
   if (needText(res, b.name, 'Treatment name')) return;
+  if (!nonNeg(b.rate)) return res.status(400).json({ error: 'Rate cannot be negative' });
   const { rows } = await c.query(
-    'UPDATE treatment_master SET name=$1,category=$2,default_frequency=$3,default_duration=$4,practitioner=$5,instructions=$6,precautions=$7 WHERE treatment_id=$8 RETURNING *',
-    [b.name, b.category || null, b.frequency || null, b.duration || null, b.practitioner || null, b.instructions || null, b.precautions || null, req.params.id]
+    'UPDATE treatment_master SET name=$1,category=$2,default_frequency=$3,default_duration=$4,practitioner=$5,instructions=$6,precautions=$7,rate=$8 WHERE treatment_id=$9 RETURNING *',
+    [b.name, b.category || null, b.frequency || null, b.duration || null, b.practitioner || null, b.instructions || null, b.precautions || null, missing(b.rate) ? null : Number(b.rate), req.params.id]
   );
   if (!rows[0]) return res.status(404).json({ error: 'Treatment not found' });
   await audit(req, 'UPDATE_TREATMENT', 'treatment_master', rows[0].treatment_id);
@@ -920,6 +922,36 @@ app.post('/api/patients/:id/discharge', auth, requirePerm('discharge.write'), pa
   await audit(req, 'CREATE_DISCHARGE', 'discharge_summaries', r.rows[0].discharge_id, req.params.id);
   res.status(201).json(r.rows[0]);
 }));
+
+// Price list for the invoice pick-lists: treatments (consultations included) at their fixed rate, and medicines at their
+// selling price (one entry per medicine; the newest priced batch wins). Read-only, for whoever writes invoices.
+app.get('/api/billing/catalog', auth, requirePerm('billing.write'), async (_req, res) => {
+  const t = await pool.query('SELECT name, category, rate FROM treatment_master WHERE active ORDER BY name');
+  const m = await pool.query(
+    `SELECT DISTINCT ON (lower(medicine_name)) medicine_name AS name, sale_price AS rate FROM pharmacy_stock
+     WHERE active ORDER BY lower(medicine_name), (sale_price IS NULL), updated_at DESC`);
+  res.json({ treatments: t.rows, medicines: m.rows });
+});
+
+// What this patient received since their last invoice, so it can be added to a new invoice in one step:
+// medicines handed over at the pharmacy and completed therapy sessions, each with its current rate.
+app.get('/api/patients/:id/billable', auth, requirePerm('billing.write'), async (req, res) => {
+  const last = await pool.query(`SELECT max(created_at) AS at FROM billing_accounts WHERE patient_id=$1 AND status<>'VOID'`, [req.params.id]);
+  const since = last.rows[0].at ?? new Date(0);
+  const meds = await pool.query(
+    `SELECT pm.medicine_name AS name, sum(di.quantity) AS quantity,
+            (SELECT s2.sale_price FROM pharmacy_stock s2 WHERE lower(s2.medicine_name)=lower(pm.medicine_name) AND s2.sale_price IS NOT NULL ORDER BY s2.updated_at DESC LIMIT 1) AS rate
+     FROM dispensing_items di JOIN prescriptions r ON r.prescription_id=di.prescription_id
+     JOIN prescription_medicines pm ON pm.row_id=di.prescription_medicine_id
+     WHERE r.patient_id=$1 AND di.created_at>$2 GROUP BY pm.medicine_name ORDER BY pm.medicine_name`, [req.params.id, since]);
+  const sessions = await pool.query(
+    `SELECT COALESCE(pt.treatment_name, 'Therapy session') AS name, count(*) AS quantity, tm.category, tm.rate
+     FROM treatment_sessions ts LEFT JOIN prescription_treatments pt ON pt.row_id=ts.prescription_treatment_id
+     LEFT JOIN treatment_master tm ON lower(tm.name)=lower(pt.treatment_name) AND tm.active
+     WHERE ts.patient_id=$1 AND ts.created_at>$2 AND upper(COALESCE(ts.status,'COMPLETED'))='COMPLETED'
+     GROUP BY 1, tm.category, tm.rate ORDER BY 1`, [req.params.id, since]);
+  res.json({ since: last.rows[0].at, medicines: meds.rows, sessions: sessions.rows });
+});
 
 app.get('/api/patients/:id/billing', auth, requirePerm('billing.read'), async (req, res) => {
   const a = await pool.query('SELECT * FROM billing_accounts WHERE patient_id=$1 ORDER BY account_date DESC', [req.params.id]);
