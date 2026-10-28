@@ -36,7 +36,7 @@ ok(pat.s === 201, 'reception registers patient ' + pat.s); const PID = pat.j.pat
 ok(/^AY-\d{4}-\d{5}$/.test(UHID), 'uhid format ' + UHID);
 const stock = await call(tok.PHARMACIST, 'POST', '/api/pharmacy/stock', { medicineName: 'Ashwagandha', quantity: 10, reorderLevel: 5 }); ok(stock.s === 201, 'stock create');
 const tm = await call(tok.DOCTOR, 'POST', '/api/treatment-master', { name: 'Abhyanga', category: 'Panchakarma' }); ok(tm.s === 201, 'treatment create ' + tm.s);
-const doc = await call(tok.DOCTOR, 'POST', `/api/patients/${PID}/prescriptions`, { treatments: [{ name: 'Abhyanga' }], medicines: [{ name: 'Ashwagandha' }] }); ok(doc.s === 201, 'rx create ' + doc.s);
+const doc = await call(tok.DOCTOR, 'POST', `/api/patients/${PID}/prescriptions`, { treatments: [{ name: 'Abhyanga', frequency: 'Once daily', duration: '7 days' }], medicines: [{ name: 'Ashwagandha', dose: '1 g', frequency: 'Once daily' }] }); ok(doc.s === 201, 'rx create ' + doc.s);
 
 const P = PID, SID = stock.j.stock_id, TID = tm.j.treatment_id;
 // [perm, method, path, body] - every protected endpoint with a valid body
@@ -45,6 +45,8 @@ const routes = [
   ['patients.view', 'GET', `/api/patients/${P}`],
   ['patients.register', 'POST', '/api/patients', { name: 'Perm Check' }],
   ['clinical.read', 'GET', `/api/patients/${P}/timeline`],
+  ['clinical.read', 'GET', `/api/patients/${P}/encounters`],
+  ['patients.view', 'GET', `/api/patients/${P}/corrections`],
   ['clinical.read', 'GET', `/api/patients/${P}/problems`],
   ['chart.write', 'POST', `/api/patients/${P}/problems`, { problem: 'Fever' }],
   ['allergies.read', 'GET', `/api/patients/${P}/allergies`],
@@ -68,7 +70,7 @@ const routes = [
   ['clinical.read', 'GET', `/api/patients/${P}/administrations`],
   ['chart.write', 'POST', `/api/patients/${P}/administrations`, { dose: '1' }],
   ['clinical.write', 'POST', `/api/patients/${P}/clinical-records`, { section: 'NOTE', payload: { type: 'SOAP', text: 'hello' } }],
-  ['prescriptions.write', 'POST', `/api/patients/${P}/prescriptions`, { medicines: [{ name: 'M' }] }],
+  ['prescriptions.write', 'POST', `/api/patients/${P}/prescriptions`, { medicines: [{ name: 'M', dose: '1 g', frequency: 'Once daily' }] }],
   ['discharge.write', 'POST', `/api/patients/${P}/letters`, { type: 'REFERRAL', recipient: 'X', subject: 'S', body: 'B' }],
   ['discharge.write', 'POST', `/api/patients/${P}/discharge-summaries`, { attendingProvider: 'Dr', status: 'IMPROVED', reason: 'r' }],
   ['clinical.read', 'GET', `/api/patients/${P}/discharge`],
@@ -102,6 +104,19 @@ for (const role of ALL_ROLES) {
   }
   console.log(`${role.padEnd(26)} ${bad ? 'FAIL x' + bad : 'ok'}  (${permissionsFor([role]).length} perms)`);
 }
+// New mutation routes must reject every role lacking the existing permission.
+for (const role of ALL_ROLES) {
+  for (const [perm,method,route] of [
+    ['patients.register','PATCH',`/api/patients/${P}`],
+    ['allergies.write','PATCH',`/api/patients/${P}/allergies/${P}`],
+    ['chart.write','PATCH',`/api/patients/${P}/problems/${P}`],
+    ['chart.write','POST',`/api/patients/${P}/encounters`],
+    ['chart.write','POST',`/api/patients/${P}/encounters/${P}/close`],
+    ['prescriptions.write','POST',`/api/patients/${P}/prescriptions/${P}/cancel`],
+  ]) if (!permissionsFor([role]).includes(perm)) {
+    ok((await call(tok[role],method,route,{reason:'Permission test'})).s===403,`${role} cannot mutate ${route}`);
+  }
+}
 // patient detail redaction per role
 for (const role of ALL_ROLES.filter(r => permissionsFor([r]).includes('patients.view'))) {
   const d = (await call(tok[role], 'GET', `/api/patients/${P}`)).j; const p = permissionsFor([role]);
@@ -113,7 +128,7 @@ for (const role of ALL_ROLES.filter(r => permissionsFor([r]).includes('patients.
 ok((await call(tok.DOCTOR, 'GET', `/api/patients/${UHID}`)).s === 200, 'uhid lookup');
 ok((await call(tok.DOCTOR, 'GET', `/api/patients/${UHID}/timeline`)).s === 404, 'uhid on sub route 404');
 // documents upload/download
-const fd = () => { const f = new FormData(); f.append('file', new Blob(['hello pdf'], { type: 'application/pdf' }), 'report.pdf'); f.append('documentType', 'LAB'); return f; };
+const fd = () => { const f = new FormData(); f.append('file', new Blob(['%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF'], { type: 'application/pdf' }), 'report.pdf'); f.append('documentType', 'LAB'); return f; };
 for (const role of ALL_ROLES) {
   const r = await fetch(`${BASE}/api/patients/${P}/documents`, { method: 'POST', headers: { Authorization: 'Bearer ' + tok[role] }, body: fd() });
   const allowed = permissionsFor([role]).includes('documents.write');
@@ -121,7 +136,7 @@ for (const role of ALL_ROLES) {
 }
 const list = await call(tok.RECEPTION, 'GET', `/api/patients/${P}/documents`); ok(list.j.length >= 1, 'doc list');
 const dl = await fetch(`${BASE}/api/documents/${list.j[0].id}/download`, { headers: { Authorization: 'Bearer ' + tok.NURSE } });
-ok(dl.status === 200 && (await dl.text()) === 'hello pdf', 'download content');
+ok(dl.status === 200 && (await dl.text()).startsWith('%PDF-1.4'), 'download content');
 ok((await fetch(`${BASE}/api/documents/${list.j[0].id}/download`, { headers: { Authorization: 'Bearer ' + tok.FINANCE } })).status === 403, 'finance download 403');
 const bad = new FormData(); bad.append('file', new Blob(['x']), 'evil.html');
 ok((await fetch(`${BASE}/api/patients/${P}/documents`, { method: 'POST', headers: { Authorization: 'Bearer ' + tok.DOCTOR }, body: bad })).status === 400, 'html upload rejected');
@@ -208,10 +223,17 @@ const aud = (await call(tok.AUDITOR, 'GET', '/api/audit')).j; ok(aud.some(a => a
 const queue = await call(tok.PHARMACIST, 'GET', '/api/pharmacy/queue'); ok(queue.s === 200 && queue.j.length > 0, 'dispensing queue lists issued prescriptions');
 ok(queue.j[0].medicines && Array.isArray(queue.j[0].allergies), 'queue carries medicines and allergies');
 ok((await call(tok.DOCTOR, 'GET', '/api/pharmacy/queue')).s === 403 || (await call(tok.AYURVEDA_PHYSICIAN, 'GET', '/api/pharmacy/queue')).s === 403, 'doctors cannot use the dispensing queue');
-const rxId = queue.j[0].prescription_id;
+const queued = queue.j.find(r => r.patient_id === P);
+const rxId = queued.prescription_id;
+const dispensingItems = [];
+for (const medicine of queued.medicines) {
+  const batch = await call(tok.PHARMACIST, 'POST', '/api/pharmacy/stock', { medicineName: medicine.medicine_name, form: medicine.form, quantity: 20, expiryDate: '2099-12-31' });
+  ok(batch.s === 201, 'create dispensing batch');
+  dispensingItems.push({ prescriptionMedicineId: medicine.row_id, stockId: batch.j.stock_id, quantity: 1 });
+}
 ok((await call(tok.AYURVEDA_PHYSICIAN, 'POST', `/api/prescriptions/${rxId}/dispense`, {})).s === 403, 'doctor cannot dispense');
-ok((await call(tok.PHARMACIST, 'POST', `/api/prescriptions/${rxId}/dispense`, {})).s === 200, 'pharmacist dispenses');
-ok((await call(tok.PHARMACIST, 'POST', `/api/prescriptions/${rxId}/dispense`, {})).s === 409, 'cannot dispense twice');
+ok((await call(tok.PHARMACIST, 'POST', `/api/prescriptions/${rxId}/dispense`, { items: dispensingItems })).s === 200, 'pharmacist dispenses');
+ok((await call(tok.PHARMACIST, 'POST', `/api/prescriptions/${rxId}/dispense`, { items: dispensingItems })).s === 409, 'cannot dispense twice');
 ok(!(await call(tok.PHARMACIST, 'GET', '/api/pharmacy/queue')).j.some(r => r.prescription_id === rxId), 'dispensed prescription leaves the queue');
 ok((await call(tok.PHARMACIST, 'GET', `/api/patients/${P}`)).j.prescriptions.some(r => r.prescription_id === rxId && r.status === 'DISPENSED'), 'status shows as DISPENSED');
 // --- nurse: vitals record and medication round

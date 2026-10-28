@@ -51,3 +51,15 @@ In production (NODE_ENV=production, as in docker-compose) nothing is seeded and 
 TESTING
 npm --prefix server test       permission matrix unit tests
 npm --prefix server run smoke  end-to-end check of all 15 roles against a running API on a throwaway database (see the file header)
+npm --prefix server run test:integration
+  Creates its own temporary PostgreSQL database and API on random localhost ports, tests patient ownership,
+  audit rollback, numeric validation, notes, migrations and concurrent dispensing, then runs the 15-role smoke suite.
+  It removes the test database afterwards and does not use .env or the existing development database.
+
+DATABASE UPGRADES
+schema.sql is the baseline for a new database. The API applies versioned SQL files from server/migrations/ on startup.
+Back up before updates, and never modify an already-applied migration. See DEPLOYMENT.md.
+
+DISPENSING
+Choose batches and quantities for every medicine before confirming dispensing. Quantities are in each stock batch's unit;
+they are entered by pharmacy staff, not inferred from a prescribed dose. Expired and insufficient stock are rejected.

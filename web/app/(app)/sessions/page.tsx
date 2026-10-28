@@ -34,7 +34,7 @@ function Sessions() {
     const t = setTimeout(() => setF(s => s.sessionDate ? s : { ...s, sessionDate: new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 10) }), 0);
     return () => clearTimeout(t);
   }, []);
-  const prescribed = (patient!.prescriptions ?? []).flatMap(rx => (rx.treatments ?? []).map(t => ({ ...t, rx: rx.prescription_no })));
+  const prescribed = (patient!.prescriptions ?? []).filter(rx => rx.status !== "CANCELLED").flatMap(rx => (rx.treatments ?? []).map(t => ({ ...t, rx: rx.prescription_no })));
 
   async function save() {
     if (f.status === "COMPLETED" && !f.procedureNotes.trim()) return toast("Describe the procedure that was done");

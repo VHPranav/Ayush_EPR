@@ -24,6 +24,7 @@ const NAV: { section?: string; items: NavItem[] }[] = [
     section: "Front desk",
     items: [
       { href: "/reception", label: "Patients", icon: UserPlus, perm: "patients.view" },
+      { href: "/record-management", label: "Record management", icon: FileCheck2, perm: "patients.view" },
       { href: "/appointments", label: "Appointments", icon: CalendarDays, perm: "appointments.read" },
       { href: "/billing", label: "Billing", icon: Receipt, perm: "billing.read" },
       { href: "/documents", label: "Documents", icon: FolderOpen, perm: "documents.read" },
@@ -174,6 +175,12 @@ function TopBar() {
   );
 }
 
+function PatientPageBoundary({ children }: { children: ReactNode }) {
+  const { patient, switching } = usePatient();
+  if (switching) return <div role="status" className="rounded-xl bg-white p-6 text-sm text-muted">Opening patient chart…</div>;
+  return <div key={patient?.patient_id ?? "no-patient"}>{children}</div>;
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const { user, ready, can } = useAuth();
   const router = useRouter();
@@ -198,7 +205,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <main className="min-h-0 flex-1 overflow-y-auto px-4 pb-10 pt-3 md:px-8">
             <div className="mx-auto max-w-[1400px]">
               {/* Once the user is known, a page they lack permission for is not rendered at all (so it makes no API calls). */}
-              {ready && user && ROUTE_PERMS.get(pathname) && !can(ROUTE_PERMS.get(pathname)!) ? <NoAccess /> : children}
+              {ready && user && ROUTE_PERMS.get(pathname) && !can(ROUTE_PERMS.get(pathname)!) ? <NoAccess /> : <PatientPageBoundary>{children}</PatientPageBoundary>}
             </div>
           </main>
         </div>

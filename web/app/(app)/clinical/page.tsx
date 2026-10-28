@@ -50,7 +50,7 @@ function VitalsCard() {
   async function save() {
     if (!Object.values(f).some(v => v.trim())) return toast("Enter at least one reading");
     try {
-      await api(`/api/patients/${patient!.patient_id}/clinical-records`, { body: { section: "VITALS", payload: { ...f, bmi } } });
+      await api(`/api/patients/${patient!.patient_id}/clinical-records`, { body: { encounterId: patient!.encounters?.find(e => e.status === "OPEN")?.encounter_id, section: "VITALS", payload: { ...f, bmi } } });
       setF(blank);
       await refresh();
       toast("Vitals saved");
@@ -87,7 +87,7 @@ function AdministrationCard() {
   const { patient } = usePatient();
   const toast = useToast();
   const { data, loading, error, reload } = useFetch<Administration[]>(`/api/patients/${patient!.patient_id}/administrations`);
-  const meds = (patient!.prescriptions ?? []).flatMap(rx => (rx.medicines ?? []).map(m => ({ ...m, rx: rx.prescription_no })));
+  const meds = (patient!.prescriptions ?? []).filter(rx => rx.status !== "CANCELLED").flatMap(rx => (rx.medicines ?? []).map(m => ({ ...m, rx: rx.prescription_no })));
   const [medId, setMedId] = useState("");
   const [status, setStatus] = useState("GIVEN");
   const [notes, setNotes] = useState("");
@@ -179,7 +179,7 @@ function AllergiesCard() {
       </Stack>
       )}
       <DataList items={data} loading={loading} error={error} empty="No allergies recorded." render={x => (
-        <Item key={x.id}><b>{x.allergen}</b>{x.reaction ? ` — ${x.reaction}` : ""}{x.severity ? ` (${x.severity})` : ""}</Item>
+        <Item key={x.id}><b>{x.allergen}</b> <Pill tone={x.status === "ACTIVE" ? "red" : "gray"}>{x.status || "ACTIVE"}</Pill>{x.reaction ? ` — ${x.reaction}` : ""}{x.severity ? ` (${x.severity})` : ""}</Item>
       )} />
     </Card>
   );

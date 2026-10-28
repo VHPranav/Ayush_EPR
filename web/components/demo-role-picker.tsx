@@ -12,13 +12,13 @@ export default function DemoRolePicker() {
 
   async function enter(username: string) {
     setBusy(username);
-    try { await login(username, "demo"); } finally { setBusy(null); }
+    try { await login(username, ""); } finally { setBusy(null); }
   }
 
   return (
     <section className="mt-8 border-t border-line pt-6" aria-label="Demo accounts">
       <h2 className="m-0 text-sm font-semibold text-ink">Explore the demo as…</h2>
-      <p className="mb-3 mt-1 text-xs text-muted">Each role sees different menus and dashboards. Sample data only. Everything is view-only. Password for any account: <b className="font-semibold text-ink-2">demo</b>.</p>
+      <p className="mb-3 mt-1 text-xs text-muted">Each role sees different menus and dashboards. Sample data only. Everything is view-only. No sign-in needed.</p>
       <div className="grid grid-cols-2 gap-2">
         {DEMO_USERS.map(u => (
           <button

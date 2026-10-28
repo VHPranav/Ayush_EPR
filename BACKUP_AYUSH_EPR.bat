@@ -1,4 +1,6 @@
 @echo off
+echo WARNING: This legacy backup creates PLAINTEXT files. Use only for synthetic UAT data.
+echo For live patient data use the encrypted backup workflow in DEPLOYMENT.md.
 cd /d "%~dp0"
 if not exist backups mkdir backups
 for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set TS=%%i

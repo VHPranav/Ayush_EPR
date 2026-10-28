@@ -111,6 +111,11 @@ export default function LoginPage() {
 
         <div className="flex flex-1 items-center justify-center py-10">
           <form onSubmit={submit} className="w-full max-w-[400px]">
+            {DEMO ? (<>
+              <h1 className="m-0 text-center text-[30px] font-semibold tracking-tight text-ink">Ayush EPR demo</h1>
+              <p className="mb-2 mt-2 text-center text-sm text-muted">No sign-in needed. Pick a role to explore.</p>
+              {DemoRolePicker && <DemoRolePicker />}
+            </>) : (<>
             <h1 className="m-0 text-center text-[30px] font-semibold tracking-tight text-ink">Sign in to Ayush EPR</h1>
             <p className="mb-8 mt-2 text-center text-sm text-muted">Enter your staff username and password to continue.</p>
 
@@ -149,7 +154,7 @@ export default function LoginPage() {
             <p className="mt-6 text-center text-sm text-muted">
               {DEMO ? "Demo build: use the role cards below, or any username above with the password demo." : "Forgot your password? Ask your administrator to reset it."}
             </p>
-            {DemoRolePicker && <DemoRolePicker />}
+            </>)}
           </form>
         </div>
 

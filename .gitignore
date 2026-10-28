@@ -20,3 +20,7 @@ server/storage/*
 *.log
 backups/
 *.local.txt
+
+# Encrypted recovery artifacts and private backup keys
+*.ayushbak
+*.backup.key

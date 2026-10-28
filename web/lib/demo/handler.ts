@@ -49,9 +49,9 @@ export async function demoRequest<T>(path: string, method: string, body: unknown
   if (route === "/api/health") return { ok: true, database: "demo", serverTime: new Date().toISOString() } as T;
 
   if (route === "/api/auth/login" && method === "POST") {
-    const { username, password } = (body ?? {}) as { username?: string; password?: string };
+    const { username } = (body ?? {}) as { username?: string };
     const u = DEMO_USERS.find(d => d.username === String(username ?? "").trim().toLowerCase());
-    if (!u || password !== "demo") throw new ApiError("Invalid credentials", 401);
+    if (!u) throw new ApiError("Invalid credentials", 401);
     const user: SessionUser = { id: `demo-${u.username}`, username: u.username, name: u.name, roles: [...u.roles], permissions: permsForRoles(u.roles) };
     return { token: "demo-token", expiresAt: new Date(Date.now() + 8 * 3_600_000).toISOString(), user } as T;
   }

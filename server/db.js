@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { runMigrations } from './migrations.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -63,8 +64,10 @@ export async function getDatabasePool() {
         await runSchema(activePool);
       }
     } catch (err) {
-      console.warn('Notice while checking existing database:', err.message);
+      await activePool.end();
+      throw err;
     }
+    await runMigrations(activePool);
     return activePool;
   }
 
@@ -119,6 +122,7 @@ export async function getDatabasePool() {
     await runSchema(activePool);
   }
 
+  await runMigrations(activePool);
   console.log('✓ Embedded PostgreSQL is ready and active.');
 
   return activePool;

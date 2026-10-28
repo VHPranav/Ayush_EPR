@@ -64,6 +64,7 @@ function Prescription() {
     try {
       await api(`/api/patients/${patient!.patient_id}/prescriptions`, {
         body: {
+          encounterId: patient!.encounters?.find(e => e.status === "OPEN")?.encounter_id,
           treatments: treatments.map(t => ({ name: master.find(m => m.treatment_id === t.treatmentId)?.name ?? "", frequency: t.frequency, duration: t.duration })),
           medicines: meds.map(m => ({ name: m.name, frequency: m.frequency, dose: m.dose, instructions: m.instructions })),
           notes,

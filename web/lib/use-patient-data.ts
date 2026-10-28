@@ -16,10 +16,11 @@ export function usePatientData<T>(suffix: string) {
   const id = patient?.patient_id ?? null;
   const { data, error, loading, reload } = useFetch<T>(id ? `/api/patients/${id}/${suffix}` : null);
 
+  const encounterId = patient?.encounters?.find(e => e.status === "OPEN")?.encounter_id;
   const post = useCallback(async (body: unknown, successMessage: string) => {
     if (!id) return false;
     try {
-      await api(`/api/patients/${id}/${suffix}`, { body });
+      await api(`/api/patients/${id}/${suffix}`, { body: body && typeof body === "object" && ["outcomes", "investigations", "exams", "referrals", "care-plans", "discharge"].includes(suffix) ? { ...body, encounterId } : body });
       toast(successMessage);
       reload();
       // The patient bar carries the allergy warning, so a new allergy must show there at once.
@@ -29,7 +30,7 @@ export function usePatientData<T>(suffix: string) {
       toast(errMsg(e));
       return false;
     }
-  }, [id, suffix, reload, toast, refresh]);
+  }, [id, suffix, reload, toast, refresh, encounterId]);
 
   return { data, error, loading, reload, post };
 }

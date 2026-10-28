@@ -96,7 +96,7 @@ function AssessmentForm({ latest, nurseVitals, patient }: { latest?: ClinicalRec
 
   async function save() {
     try {
-      await api(`/api/patients/${patient.patient_id}/clinical-records`, { body: { section: "INTEGRATED_CLINICAL_ASSESSMENT", payload: toPayload(f) } });
+      await api(`/api/patients/${patient.patient_id}/clinical-records`, { body: { encounterId: patient!.encounters?.find(e => e.status === "OPEN")?.encounter_id, section: "INTEGRATED_CLINICAL_ASSESSMENT", payload: toPayload(f) } });
       setDirty(false);
       setSavedAt(new Date().toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false }));
       await refresh();
@@ -153,7 +153,7 @@ function AssessmentForm({ latest, nurseVitals, patient }: { latest?: ClinicalRec
           <span className="text-sm text-muted">
             {dirty ? <b className="text-warn">Unsaved changes</b> : savedAt ? <>Saved at {savedAt}</> : latest ? <>Last saved {fmtDateTime(latest.created_at)}{latest.author_name ? ` by ${latest.author_name}` : ""}</> : "Not saved yet"}
           </span>
-          <Button variant="primary" onClick={save}>Save clinical record</Button>
+          <Button variant="primary" onClick={save}>Sign and save clinical record</Button>
         </div>
       )}
     </fieldset>
@@ -190,7 +190,7 @@ function Notes() {
 
   async function save() {
     try {
-      await api(`/api/patients/${patient!.patient_id}/clinical-records`, { body: { section: "NOTE", payload: { type, text } } });
+      await api(`/api/patients/${patient!.patient_id}/clinical-records`, { body: { encounterId: patient!.encounters?.find(e => e.status === "OPEN")?.encounter_id, section: "NOTE", payload: { type, text } } });
       setText("");
       await refresh();
       toast("Note saved centrally");
@@ -207,7 +207,7 @@ function Notes() {
             <SelectField label="Type" value={type} onChange={setType} options={NOTE_TYPES} />
             <AreaField label="Note" value={text} onChange={setText} />
           </Grid>
-          <Button variant="primary" onClick={save}>Save note</Button>
+          <p className="text-sm text-muted">Saving attests to this note under your signed-in identity. Amendments preserve the original.</p><Button variant="primary" onClick={save}>Sign and save note</Button>
         </>
       )}
       {notes.length ? notes.map(n => (

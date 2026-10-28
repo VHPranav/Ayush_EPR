@@ -46,6 +46,11 @@ export interface ClinicalPayload {
 }
 
 export interface ClinicalRecord {
+  version?: number;
+  amended_from?: string | null;
+  amendment_reason?: string | null;
+  signed_at?: string | null;
+  encounter_id?: string | null;
   author_name?: string | null;
   record_id: string;
   section: string;
@@ -53,7 +58,7 @@ export interface ClinicalRecord {
   created_at: string;
 }
 
-export interface RxMedicine { row_id?: string; medicine_name: string; dose: string | null; frequency: string | null; instructions: string | null }
+export interface RxMedicine { row_id?: string; form?: string | null; medicine_name: string; dose: string | null; frequency: string | null; instructions: string | null }
 export interface RxTreatment { row_id?: string; treatment_name: string; frequency: string | null; duration: string | null }
 export interface Prescription {
   prescription_id: string;
@@ -65,7 +70,11 @@ export interface Prescription {
   treatments?: RxTreatment[];
 }
 
+export interface Encounter { encounter_id: string; encounter_type: string; status: string; started_at: string; ended_at: string | null }
+
 export interface Patient extends PatientSummary {
+  address?: string | null;
+  encounters?: Encounter[];
   email: string | null;
   /** Active allergies; only sent to roles that may read them. */
   allergies?: { id: string; allergen: string; reaction: string | null; severity: string | null }[];
@@ -80,7 +89,7 @@ export interface TimelineEvent { event_time: string; event_type: string; event_i
 export interface Administration { id: string; administered_at: string | null; status: string; dose: string | null; notes: string | null; adverse_event: string | null; medicine_name: string | null; administered_by_name: string | null }
 export interface VitalsPayload { bp?: string; pulse?: string; temp?: string; spo2?: string; height?: string; weight?: string; bmi?: string; rr?: string }
 export interface Problem { id: string; problem: string; status: string; notes: string | null }
-export interface Allergy { id: string; allergen: string; reaction: string | null; severity: string | null }
+export interface Allergy { status?: string; id: string; allergen: string; reaction: string | null; severity: string | null }
 export interface MedRec { id: string; medicine_name: string; dose: string | null; route: string | null; frequency: string | null }
 export interface Investigation { id: string; test_name: string; result_summary: string | null }
 export interface Outcome { id: string; domain: string; scale_name: string | null; score: number | string | null; narrative: string | null }
@@ -95,7 +104,7 @@ export interface StockItem {
   stock_id: string;
   medicine_name: string; form: string | null; strength?: string | null; batch_no: string | null; expiry_date: string | null;
   quantity: number | string; unit: string | null; reorder_level: number | string; supplier?: string | null; location?: string | null;
-  low_stock?: boolean;
+  low_stock?: boolean; expired?: boolean;
 }
 export interface TreatmentMaster {
   treatment_id: string; name: string; category: string | null;

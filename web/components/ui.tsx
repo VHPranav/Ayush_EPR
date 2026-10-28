@@ -164,6 +164,7 @@ export function PatientBar() {
           <div className="mt-0.5 text-sm text-muted">{age !== null ? `${age} yrs · ` : ""}DOB {fmtDate(p.dob)} · {p.sex || "—"} · {p.phone || "—"}</div>
         </div>
       </div>
+      {p.encounters && <div className="mt-2 text-sm text-muted">{p.encounters.some(e => e.status === "OPEN") ? `Open visit: ${p.encounters.filter(e => e.status === "OPEN").map(e => e.encounter_type).join(", ")}` : "No open visit"} · <Link className="underline" href="/record-management">Manage visits and corrections</Link></div>}
       {p.allergies?.length ? (
         <div role="alert" className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-danger-soft px-3.5 py-2.5 text-sm text-danger">
           <b>Allergies:</b>
@@ -185,8 +186,8 @@ export function ViewOnly({ what }: { what?: string }) {
 
 /** Wraps pages that need an open patient; replaces the old "Open a patient first" toast. */
 export function RequirePatient({ children }: { children: ReactNode }) {
-  const { patient } = usePatient();
-  if (patient) return <><PatientBar />{children}</>;
+  const { patient, markDirty } = usePatient();
+  if (patient) return <div key={patient.patient_id} onChangeCapture={markDirty}><PatientBar />{children}</div>;
   return (
     <Card>
       <Empty>

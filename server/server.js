@@ -8,6 +8,12 @@ import multer from 'multer';
 import { closeDatabase, getDatabasePool } from './db.js';
 import { ALL_ROLES, permissionsFor, requirePerm } from './permissions.js';
 import { bootstrapAccounts } from './bootstrap.js';
+import { patientLinks } from './patient-links.js';
+import { transactional } from './transaction.js';
+import { registerChartSafety, visitForWrite, checkPrescriptionLine } from './chart-safety.js';
+import { validateUpload } from './uploads.js';
+import { dispensePrescription } from './dispensing.js';
+import { hasText, finiteNumber, missing, nonNegative, prescriptionError, requiredText } from './validation.js';
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -29,7 +35,7 @@ const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, STORAGE_DIR),
   filename: (_req, file, cb) => cb(null, crypto.randomUUID() + path.extname(file.originalname).toLowerCase())
 });
-const ALLOWED_UPLOADS = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.txt', '.csv', '.doc', '.docx', '.xls', '.xlsx']);
+const ALLOWED_UPLOADS = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.txt', '.csv']);
 const upload = multer({
   storage,
   limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024, files: 1 },
@@ -50,10 +56,10 @@ app.param('id', (req, res, next, id) => {
   res.status(404).json({ error: 'Not found' });
 });
 
+app.param('recordId', (req, res, next, id) => UUID_RE.test(id) ? next() : res.status(404).json({ error: 'Not found' }));
+
 const pool = await getDatabasePool();
 await pool.query('INSERT INTO roles(name) SELECT unnest($1::text[]) ON CONFLICT DO NOTHING', [ALL_ROLES]);
-// Small in-place upgrade for databases created before appointments had a length (schema.sql only runs on an empty database).
-await pool.query('ALTER TABLE appointments ADD COLUMN IF NOT EXISTS duration_minutes integer NOT NULL DEFAULT 30');
 
 const sha256 = s => crypto.createHash('sha256').update(s).digest('hex');
 const scryptHash = s => crypto.scryptSync(s, PASSWORD_SALT || 'CHANGE_ME_SALT', 32).toString('hex');
@@ -71,41 +77,38 @@ await bootstrapAccounts(pool, { isProd: IS_PROD, hash: securePassword, minPasswo
 const token = () => crypto.randomBytes(32).toString('hex');
 
 const audit = async (c, optsOrAction, ...rest) => {
-  try {
-    let userId = null, sessionId = null, action, tableName = null, recordId = null, req = null, details = null;
-    let client = pool;
+  let userId = null, sessionId = null, action, tableName = null, recordId = null, req = null, details = null;
+  let client = pool;
 
-    if (typeof optsOrAction === 'string') {
-      req = c;
-      action = optsOrAction;
-      tableName = rest[0] || null;
-      recordId = rest[1] || null;
-      details = rest[2] || null;
-      userId = req?.auth?.user_id || null;
-      sessionId = req?.auth?.session_id || null;
-    } else {
-      if (c && typeof c.query === 'function') client = c;
-      const opts = optsOrAction || {};
-      userId = opts.userId || null;
-      sessionId = opts.sessionId || null;
-      action = opts.action;
-      tableName = opts.tableName || null;
-      recordId = opts.recordId || null;
-      req = opts.req || null;
-      details = opts.details || null;
-    }
-
-    const jsonDetails = details !== null && details !== undefined
-      ? (typeof details === 'object' ? JSON.stringify(details) : JSON.stringify({ detail: String(details) }))
-      : null;
-
-    await client.query(
-      'INSERT INTO audit_log(user_id,session_id,action,table_name,record_id,ip_address,user_agent,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
-      [userId, sessionId, action, tableName, recordId, req?.ip || null, req?.get?.('user-agent') || null, jsonDetails]
-    );
-  } catch (err) {
-    console.error('Audit log notice:', err.message);
+  if (typeof optsOrAction === 'string') {
+    req = c;
+    client = req.db || pool;
+    action = optsOrAction;
+    tableName = rest[0] || null;
+    recordId = rest[1] || null;
+    details = rest[2] ? { patientId: rest[2], ...(rest[3] || {}) } : null;
+    userId = req?.auth?.user_id || null;
+    sessionId = req?.auth?.session_id || null;
+  } else {
+    if (c && typeof c.query === 'function') client = c;
+    const opts = optsOrAction || {};
+    userId = opts.userId || null;
+    sessionId = opts.sessionId || null;
+    action = opts.action;
+    tableName = opts.tableName || null;
+    recordId = opts.recordId || null;
+    req = opts.req || null;
+    details = opts.details || null;
   }
+
+  const jsonDetails = details !== null && details !== undefined
+    ? (typeof details === 'object' ? JSON.stringify(details) : JSON.stringify({ detail: String(details) }))
+    : null;
+
+  await client.query(
+    'INSERT INTO audit_log(user_id,session_id,action,table_name,record_id,ip_address,user_agent,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
+    [userId, sessionId, action, tableName, recordId, req?.ip || null, req?.get?.('user-agent') || null, jsonDetails]
+  );
 };
 
 app.get('/api/health', async (_req, res) => {
@@ -154,66 +157,56 @@ setInterval(() => {
   for (const [k, v] of failures) if (!v.some(t => now - t < FAIL_WINDOW_MS)) failures.delete(k);
 }, 5 * 60e3).unref();
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', transactional(pool, async (req, res, c) => {
   const { username, password } = req.body || {};
   if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) return res.status(400).json({ error: 'Username and password required' });
   const keys = failKeys(req, username);
   if (throttled(keys)) return res.status(429).json({ error: 'Too many failed sign-in attempts. Try again in 15 minutes.' });
-  const c = await pool.connect();
-  try {
-    const { rows } = await c.query(
-      `SELECT u.*,array_remove(array_agg(r.name),NULL) roles
-       FROM users u
-       LEFT JOIN user_roles ur ON ur.user_id=u.user_id
-       LEFT JOIN roles r ON r.role_id=ur.role_id
-       WHERE lower(u.username)=lower($1)
-       GROUP BY u.user_id`,
-      [username]
-    );
-    const u = rows[0];
-    const ok = u && passwordMatches(password, u.password_hash);
-    await audit(c, { userId: ok ? u.user_id : null, action: ok ? 'LOGIN_SUCCESS' : 'LOGIN_FAILURE', tableName: 'users', recordId: u?.user_id || null, req, details: { username } });
-    if (!ok || !u.active) { recordFailure(keys); return res.status(401).json({ error: 'Invalid credentials' }); }
-    failures.delete(keys[0]);
+  const { rows } = await c.query(
+    `SELECT u.*,array_remove(array_agg(r.name),NULL) roles
+     FROM users u
+     LEFT JOIN user_roles ur ON ur.user_id=u.user_id
+     LEFT JOIN roles r ON r.role_id=ur.role_id
+     WHERE lower(u.username)=lower($1)
+     GROUP BY u.user_id`,
+    [username]
+  );
+  const u = rows[0];
+  const ok = u && u.active && passwordMatches(password, u.password_hash);
+  await audit(c, { userId: ok ? u.user_id : null, action: ok ? 'LOGIN_SUCCESS' : 'LOGIN_FAILURE', tableName: 'users', recordId: u?.user_id || null, req, details: { username } });
+  if (!ok || !u.active) { recordFailure(keys); req.commitOnError = true; return res.status(401).json({ error: 'Invalid credentials' }); }
+  failures.delete(keys[0]);
 
-    const raw = token();
-    const exp = new Date(Date.now() + SESSION_HOURS * 3600e3);
-    const s = await c.query(
-      'INSERT INTO sessions(user_id,token_hash,expires_at,ip_address,user_agent) VALUES($1,$2,$3,$4,$5) RETURNING session_id',
-      [u.user_id, sha256(raw), exp, req.ip, req.get('user-agent')]
-    );
-    await audit(c, { userId: u.user_id, sessionId: s.rows[0].session_id, action: 'SESSION_CREATED', tableName: 'sessions', recordId: s.rows[0].session_id, req });
-    res.json({ token: raw, expiresAt: exp, user: { id: u.user_id, username: u.username, name: u.display_name, roles: u.roles, permissions: permissionsFor(u.roles) } });
-  } finally {
-    c.release();
-  }
-});
+  const raw = token();
+  const exp = new Date(Date.now() + SESSION_HOURS * 3600e3);
+  const s = await c.query(
+    'INSERT INTO sessions(user_id,token_hash,expires_at,ip_address,user_agent) VALUES($1,$2,$3,$4,$5) RETURNING session_id',
+    [u.user_id, sha256(raw), exp, req.ip, req.get('user-agent')]
+  );
+  await audit(c, { userId: u.user_id, sessionId: s.rows[0].session_id, action: 'SESSION_CREATED', tableName: 'sessions', recordId: s.rows[0].session_id, req });
+  res.json({ token: raw, expiresAt: exp, user: { id: u.user_id, username: u.username, name: u.display_name, roles: u.roles, permissions: permissionsFor(u.roles) } });
+}));
 
-app.post('/api/auth/logout', auth, async (req, res) => {
-  const c = await pool.connect();
-  try {
-    await c.query('UPDATE sessions SET logout_at=now() WHERE session_id=$1', [req.auth.session_id]);
-    await audit(c, { userId: req.auth.user_id, sessionId: req.auth.session_id, action: 'LOGOUT', tableName: 'sessions', recordId: req.auth.session_id, req });
-    res.json({ ok: true });
-  } finally {
-    c.release();
-  }
-});
+app.post('/api/auth/logout', auth, transactional(pool, async (req, res, c) => {
+  await c.query('UPDATE sessions SET logout_at=now() WHERE session_id=$1', [req.auth.session_id]);
+  await audit(c, { userId: req.auth.user_id, sessionId: req.auth.session_id, action: 'LOGOUT', tableName: 'sessions', recordId: req.auth.session_id, req });
+  res.json({ ok: true });
+}));
 
 app.get('/api/me', auth, (req, res) => res.json({ id: req.auth.user_id, username: req.auth.username, name: req.auth.display_name, roles: req.auth.roles, permissions: req.auth.permissions }));
 
-app.post('/api/auth/change-password', auth, async (req, res) => {
+app.post('/api/auth/change-password', auth, transactional(pool, async (req, res, c) => {
   const { currentPassword, newPassword } = req.body || {};
   if (typeof currentPassword !== 'string' || typeof newPassword !== 'string' || newPassword.length < 12)
     return res.status(400).json({ error: 'New password must be at least 12 characters' });
-  const r = await pool.query('SELECT password_hash FROM users WHERE user_id=$1', [req.auth.user_id]);
+  const r = await c.query('SELECT password_hash FROM users WHERE user_id=$1', [req.auth.user_id]);
   if (!r.rows[0] || !passwordMatches(currentPassword, r.rows[0].password_hash))
     return res.status(401).json({ error: 'Current password is incorrect' });
-  await pool.query('UPDATE users SET password_hash=$1 WHERE user_id=$2', [securePassword(newPassword), req.auth.user_id]);
-  await pool.query('UPDATE sessions SET logout_at=now() WHERE user_id=$1 AND logout_at IS NULL AND session_id<>$2', [req.auth.user_id, req.auth.session_id]);
-  await audit(pool, { userId: req.auth.user_id, sessionId: req.auth.session_id, action: 'PASSWORD_CHANGED', tableName: 'users', recordId: req.auth.user_id, req });
+  await c.query('UPDATE users SET password_hash=$1 WHERE user_id=$2', [securePassword(newPassword), req.auth.user_id]);
+  await c.query('UPDATE sessions SET logout_at=now() WHERE user_id=$1 AND logout_at IS NULL AND session_id<>$2', [req.auth.user_id, req.auth.session_id]);
+  await audit(c, { userId: req.auth.user_id, sessionId: req.auth.session_id, action: 'PASSWORD_CHANGED', tableName: 'users', recordId: req.auth.user_id, req });
   res.json({ ok: true });
-});
+}));
 
 // ---- User management (Super Admin) ----
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,31}$/i;
@@ -310,18 +303,20 @@ app.put('/api/users/:id', auth, requirePerm('users.manage'), async (req, res) =>
   }
 });
 
-app.post('/api/users/:id/reset-password', auth, requirePerm('users.manage'), async (req, res) => {
+app.post('/api/users/:id/reset-password', auth, requirePerm('users.manage'), transactional(pool, async (req, res, c) => {
   const { newPassword } = req.body || {};
   if (typeof newPassword !== 'string' || newPassword.length < MIN_PASSWORD) return res.status(400).json({ error: `Password must be at least ${MIN_PASSWORD} characters` });
-  const u = await pool.query('SELECT user_id, username FROM users WHERE user_id::text=$1', [req.params.id]);
+  const u = await c.query('SELECT user_id, username FROM users WHERE user_id::text=$1', [req.params.id]);
   if (!u.rows[0]) return res.status(404).json({ error: 'User not found' });
   const target = u.rows[0];
-  await pool.query('UPDATE users SET password_hash=$1 WHERE user_id=$2', [securePassword(newPassword), target.user_id]);
+  await c.query('UPDATE users SET password_hash=$1 WHERE user_id=$2', [securePassword(newPassword), target.user_id]);
   // Sign the user out everywhere (an admin resetting their own password keeps their current session).
-  await pool.query('UPDATE sessions SET logout_at=now() WHERE user_id=$1 AND logout_at IS NULL AND session_id <> $2', [target.user_id, target.user_id === req.auth.user_id ? req.auth.session_id : '00000000-0000-0000-0000-000000000000']);
-  await audit(pool, { userId: req.auth.user_id, sessionId: req.auth.session_id, action: 'RESET_PASSWORD', tableName: 'users', recordId: target.user_id, req, details: { username: target.username } });
+  await c.query('UPDATE sessions SET logout_at=now() WHERE user_id=$1 AND logout_at IS NULL AND session_id <> $2', [target.user_id, target.user_id === req.auth.user_id ? req.auth.session_id : '00000000-0000-0000-0000-000000000000']);
+  await audit(c, { userId: req.auth.user_id, sessionId: req.auth.session_id, action: 'RESET_PASSWORD', tableName: 'users', recordId: target.user_id, req, details: { username: target.username } });
   res.json({ ok: true });
-});
+}));
+
+registerChartSafety({ app, pool, auth, audit });
 
 app.post('/api/patients', auth, requirePerm('patients.register'), async (req, res) => {
   const c = await pool.connect();
@@ -384,8 +379,11 @@ app.get('/api/patients/:id', auth, requirePerm('patients.view'), async (req, res
     }));
   }
   const allergies = can('allergies.read') ? (await pool.query("SELECT id,allergen,reaction,severity FROM allergies WHERE patient_id=$1 AND COALESCE(status,'ACTIVE')='ACTIVE' ORDER BY created_at DESC", [id])).rows : [];
+  await audit(req, 'VIEW_PATIENT', 'patients', id, id);
+  const encounters = can('clinical.read') ? (await pool.query('SELECT * FROM encounters WHERE patient_id=$1 ORDER BY started_at DESC', [id])).rows : [];
   res.json({
     ...p.rows[0],
+    encounters,
     id: p.rows[0].patient_id,
     allergies,
     clinicalRecords: can('clinical.read') ? cr.rows : [],
@@ -396,63 +394,68 @@ app.get('/api/patients/:id', auth, requirePerm('patients.view'), async (req, res
   });
 });
 
-app.post('/api/patients/:id/clinical-records', auth, requirePerm('clinical.write'), async (req, res) => {
+app.post('/api/patients/:id/clinical-records', auth, requirePerm('clinical.write'), patientLinks(pool, 'encounterId', 'amendedFrom'), transactional(pool, async (req, res, c) => {
   const { section, payload, encounterId = null, amendedFrom = null } = req.body || {};
-  if (typeof section !== 'string' || !section || payload === undefined) return res.status(400).json({ error: 'section and payload required' });
-  const { rows } = await pool.query(
-    'INSERT INTO clinical_records(patient_id,encounter_id,section,payload,authored_by,amended_from) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',
-    [req.params.id, encounterId, section, J(payload), req.auth.user_id, amendedFrom]
-  );
-  if (section === 'NOTE') {
-    try {
-      await pool.query(
-        'INSERT INTO clinical_notes(patient_id,encounter_id,note_type,note_text,created_by) VALUES($1,$2,$3,$4,$5)',
-        [req.params.id, encounterId, payload?.type || 'NOTE', payload?.text || '', req.auth.user_id]
-      );
-    } catch {}
+  if (!hasText(section) || !payload || typeof payload !== 'object' || Array.isArray(payload)) return res.status(400).json({ error: 'section and payload required' });
+  if (section === 'NOTE' && !hasText(payload.text)) return res.status(400).json({ error: 'Note text is required' });
+  let version = 1, visit = null;
+  if (amendedFrom) {
+    if (!hasText(req.body.amendmentReason) || req.body.amendmentReason.trim().length < 5) return res.status(400).json({ error: 'An amendment reason of at least 5 characters is required' });
+    const original = (await c.query('SELECT * FROM clinical_records WHERE record_id=$1 AND patient_id=$2 FOR UPDATE', [amendedFrom, req.params.id])).rows[0];
+    if (original && original.authored_by !== req.auth.user_id && !req.auth.permissions.includes('prescriptions.write')) return res.status(403).json({ error: 'Only the original author or a prescribing clinician may amend this record' });
+    if (!original || original.section !== section) return res.status(400).json({ error: 'Amendment must use the original record section' });
+    if ((await c.query('SELECT 1 FROM clinical_records WHERE amended_from=$1', [amendedFrom])).rowCount) return res.status(409).json({ error: 'This record has already been amended. Reload and amend its latest version.' });
+    version = original.version + 1;
+    visit = original.encounter_id;
+  } else {
+    visit = await visitForWrite(c, req.params.id, encounterId);
   }
-  await audit(pool, { userId: req.auth.user_id, sessionId: req.auth.session_id, action: 'CREATE_CLINICAL_RECORD', tableName: 'clinical_records', recordId: rows[0].record_id, req });
+  const { rows } = await c.query(
+    'INSERT INTO clinical_records(patient_id,encounter_id,section,payload,authored_by,amended_from,version,amendment_reason,signed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now()) RETURNING *',
+    [req.params.id, visit, section, J(payload), req.auth.user_id, amendedFrom, version, amendedFrom ? req.body.amendmentReason.trim() : null]
+  );
+  await audit(req, amendedFrom ? 'AMEND_CLINICAL_RECORD' : 'CREATE_CLINICAL_RECORD', 'clinical_records', rows[0].record_id, req.params.id,
+    { amendedFrom, version, reason: rows[0].amendment_reason });
   res.status(201).json(rows[0]);
-});
+}));
 
-const nonNeg = v => v === undefined || v === null || v === '' || (Number.isFinite(Number(v)) && Number(v) >= 0);
+const nonNeg = nonNegative;
 // jsonb parameters must be sent as JSON text: node-pg would turn a JS array into a Postgres array literal and a bare string is not JSON.
 const J = v => JSON.stringify(v ?? null);
-const hasText = v => typeof v === 'string' && !!v.trim();
 const needText = (res, v, label) => hasText(v) ? false : (res.status(400).json({ error: `${label} is required` }), true);
 
-app.post('/api/pharmacy/stock', auth, requirePerm('pharmacy.write'), async (req, res) => {
+app.post('/api/pharmacy/stock', auth, requirePerm('pharmacy.write'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
   if (needText(res, b.medicineName, 'Medicine name')) return;
   if (![b.quantity, b.reorderLevel, b.purchasePrice].every(nonNeg)) return res.status(400).json({ error: 'Quantity, reorder level and price cannot be negative' });
-  const { rows } = await pool.query(
+  const { rows } = await c.query(
     `INSERT INTO pharmacy_stock(medicine_id,medicine_name,form,strength,batch_no,expiry_date,quantity,unit,reorder_level,supplier,purchase_price,location)
      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-    [b.medicineId || null, b.medicineName, b.form || null, b.strength || null, b.batchNo || null, b.expiryDate || null, b.quantity || 0, b.unit || null, b.reorderLevel || 0, b.supplier || null, b.purchasePrice || null, b.location || null]
+    [b.medicineId || null, b.medicineName, b.form || null, b.strength || null, b.batchNo || null, b.expiryDate || null, b.quantity || 0, b.unit || null, b.reorderLevel || 0, b.supplier || null, missing(b.purchasePrice) ? null : Number(b.purchasePrice), b.location || null]
   );
   await audit(req, 'CREATE_STOCK', 'pharmacy_stock', rows[0].stock_id);
   res.status(201).json(rows[0]);
-});
+}));
 
-app.put('/api/pharmacy/stock/:id', auth, requirePerm('pharmacy.write'), async (req, res) => {
+app.put('/api/pharmacy/stock/:id', auth, requirePerm('pharmacy.write'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
   if (needText(res, b.medicineName, 'Medicine name')) return;
   if (![b.quantity, b.reorderLevel, b.purchasePrice].every(nonNeg)) return res.status(400).json({ error: 'Quantity, reorder level and price cannot be negative' });
-  const { rows } = await pool.query(
+  const { rows } = await c.query(
     `UPDATE pharmacy_stock SET medicine_name=$1,form=$2,strength=$3,batch_no=$4,expiry_date=$5,quantity=$6,unit=$7,reorder_level=$8,supplier=$9,purchase_price=$10,location=$11,updated_at=now() WHERE stock_id=$12 RETURNING *`,
-    [b.medicineName, b.form || null, b.strength || null, b.batchNo || null, b.expiryDate || null, b.quantity || 0, b.unit || null, b.reorderLevel || 0, b.supplier || null, b.purchasePrice || null, b.location || null, req.params.id]
+    [b.medicineName, b.form || null, b.strength || null, b.batchNo || null, b.expiryDate || null, b.quantity || 0, b.unit || null, b.reorderLevel || 0, b.supplier || null, missing(b.purchasePrice) ? null : Number(b.purchasePrice), b.location || null, req.params.id]
   );
   if (!rows[0]) return res.status(404).json({ error: 'Stock item not found' });
   await audit(req, 'UPDATE_STOCK', 'pharmacy_stock', rows[0].stock_id);
   res.json(rows[0]);
-});
+}));
 
-app.delete('/api/pharmacy/stock/:id', auth, requirePerm('pharmacy.write'), async (req, res) => {
-  const r = await pool.query('UPDATE pharmacy_stock SET active=false,updated_at=now() WHERE stock_id=$1 AND active', [req.params.id]);
+app.delete('/api/pharmacy/stock/:id', auth, requirePerm('pharmacy.write'), transactional(pool, async (req, res, c) => {
+  const r = await c.query('UPDATE pharmacy_stock SET active=false,updated_at=now() WHERE stock_id=$1 AND active', [req.params.id]);
   if (!r.rowCount) return res.status(404).json({ error: 'Stock item not found' });
   await audit(req, 'DELETE_STOCK', 'pharmacy_stock', req.params.id);
   res.json({ ok: true });
-});
+}));
 
 // Prescriptions waiting to be dispensed, oldest first, with each patient's active allergies for the safety check.
 app.get('/api/pharmacy/queue', auth, requirePerm('pharmacy.write'), async (_req, res) => {
@@ -467,47 +470,47 @@ app.get('/api/pharmacy/queue', auth, requirePerm('pharmacy.write'), async (_req,
   res.json(rx.rows.map(r => ({ ...r, medicines: meds.rows.filter(m => m.prescription_id === r.prescription_id) })));
 });
 
-app.post('/api/prescriptions/:id/dispense', auth, requirePerm('pharmacy.write'), async (req, res) => {
-  const { rows } = await pool.query(`UPDATE prescriptions SET status='DISPENSED' WHERE prescription_id=$1 AND status='ISSUED' RETURNING prescription_id,patient_id,prescription_no,status`, [req.params.id]);
-  if (!rows[0]) return res.status(409).json({ error: 'This prescription was already dispensed or does not exist' });
-  await audit(req, 'DISPENSE_PRESCRIPTION', 'prescriptions', rows[0].prescription_id, rows[0].patient_id, { prescriptionNo: rows[0].prescription_no });
-  res.json(rows[0]);
-});
+app.post('/api/prescriptions/:id/dispense', auth, requirePerm('pharmacy.write'), transactional(pool, async (req, res, c) => {
+  const result = await dispensePrescription(c, req.params.id, req.body?.items ?? [], req.auth.user_id);
+  await audit(req, 'DISPENSE_PRESCRIPTION', 'prescriptions', result.prescription_id, result.patient_id,
+    { prescriptionNo: result.prescription_no, items: req.body?.items ?? [] });
+  res.json(result);
+}));
 
 app.get('/api/pharmacy/stock', auth, requirePerm('pharmacy.read'), async (_req, res) => {
-  const { rows } = await pool.query('SELECT *, (quantity<=reorder_level) AS low_stock FROM pharmacy_stock WHERE active ORDER BY medicine_name');
+  const { rows } = await pool.query('SELECT *, (quantity<=reorder_level) AS low_stock, (expiry_date IS NOT NULL AND expiry_date<CURRENT_DATE) AS expired FROM pharmacy_stock WHERE active ORDER BY medicine_name');
   res.json(rows);
 });
 
-app.post('/api/treatment-master', auth, requirePerm('treatments.write'), async (req, res) => {
+app.post('/api/treatment-master', auth, requirePerm('treatments.write'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
   if (needText(res, b.name, 'Treatment name')) return;
-  const { rows } = await pool.query(
+  const { rows } = await c.query(
     'INSERT INTO treatment_master(name,category,default_frequency,default_duration,practitioner,instructions,precautions) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',
     [b.name, b.category || null, b.frequency || null, b.duration || null, b.practitioner || null, b.instructions || null, b.precautions || null]
   );
   await audit(req, 'CREATE_TREATMENT', 'treatment_master', rows[0].treatment_id);
   res.status(201).json(rows[0]);
-});
+}));
 
-app.put('/api/treatment-master/:id', auth, requirePerm('treatments.write'), async (req, res) => {
+app.put('/api/treatment-master/:id', auth, requirePerm('treatments.write'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
   if (needText(res, b.name, 'Treatment name')) return;
-  const { rows } = await pool.query(
+  const { rows } = await c.query(
     'UPDATE treatment_master SET name=$1,category=$2,default_frequency=$3,default_duration=$4,practitioner=$5,instructions=$6,precautions=$7 WHERE treatment_id=$8 RETURNING *',
     [b.name, b.category || null, b.frequency || null, b.duration || null, b.practitioner || null, b.instructions || null, b.precautions || null, req.params.id]
   );
   if (!rows[0]) return res.status(404).json({ error: 'Treatment not found' });
   await audit(req, 'UPDATE_TREATMENT', 'treatment_master', rows[0].treatment_id);
   res.json(rows[0]);
-});
+}));
 
-app.delete('/api/treatment-master/:id', auth, requirePerm('treatments.delete'), async (req, res) => {
-  const r = await pool.query('UPDATE treatment_master SET active=false WHERE treatment_id=$1 AND active', [req.params.id]);
+app.delete('/api/treatment-master/:id', auth, requirePerm('treatments.delete'), transactional(pool, async (req, res, c) => {
+  const r = await c.query('UPDATE treatment_master SET active=false WHERE treatment_id=$1 AND active', [req.params.id]);
   if (!r.rowCount) return res.status(404).json({ error: 'Treatment not found' });
   await audit(req, 'DELETE_TREATMENT', 'treatment_master', req.params.id);
   res.json({ ok: true });
-});
+}));
 
 app.get('/api/treatment-master', auth, requirePerm('treatments.read'), async (_req, res) => {
   const { rows } = await pool.query('SELECT * FROM treatment_master WHERE active ORDER BY name');
@@ -519,8 +522,10 @@ app.post('/api/patients/:id/prescriptions', auth, requirePerm('prescriptions.wri
   try {
     await c.query('BEGIN');
     const b = req.body || {};
-    if (!(b.treatments?.length || b.medicines?.length)) { await c.query('ROLLBACK'); return res.status(400).json({ error: 'Add at least one treatment or medicine' }); }
-    const p = await c.query('INSERT INTO prescriptions(patient_id,prescriber_user,status,notes) VALUES($1,$2,$3,$4) RETURNING *', [req.params.id, req.auth.user_id, b.status || 'ISSUED', b.notes || null]);
+    const invalid = prescriptionError(b);
+    if (invalid) { await c.query('ROLLBACK'); return res.status(400).json({ error: invalid }); }
+    const encounterId = await visitForWrite(c, req.params.id, b.encounterId);
+    const p = await c.query('INSERT INTO prescriptions(patient_id,prescriber_user,status,notes,encounter_id) VALUES($1,$2,$3,$4,$5) RETURNING *', [req.params.id, req.auth.user_id, b.status || 'ISSUED', b.notes || null, encounterId]);
     const rx = p.rows[0];
     for (const [i, t] of (b.treatments || []).entries()) {
       await c.query(
@@ -540,32 +545,32 @@ app.post('/api/patients/:id/prescriptions', auth, requirePerm('prescriptions.wri
   } catch (e) {
     await c.query('ROLLBACK');
     console.error('Prescription failed:', e.message);
-    res.status(e.code === '23503' ? 404 : 400).json({ error: e.code === '23503' ? 'Patient not found' : 'Prescription could not be saved' });
+    res.status(e.status || (e.code === '23503' ? 404 : 400)).json({ error: e.status ? e.message : e.code === '23503' ? 'Patient not found' : 'Prescription could not be saved' });
   } finally {
     c.release();
   }
 });
 
-app.post('/api/patients/:id/letters', auth, requirePerm('discharge.write'), async (req, res) => {
+app.post('/api/patients/:id/letters', auth, requirePerm('discharge.write'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
-  const { rows } = await pool.query(
+  const { rows } = await c.query(
     'INSERT INTO letters(patient_id,letter_type,recipient,subject,body,authored_by,author_id) VALUES($1,$2,$3,$4,$5,$6,$6) RETURNING *',
     [req.params.id, b.type, b.recipient, b.subject, b.body, req.auth.user_id]
   );
   await audit(req, 'CREATE_LETTER', 'letters', rows[0].letter_id, req.params.id);
   res.status(201).json(rows[0]);
-});
+}));
 
-app.post('/api/patients/:id/discharge-summaries', auth, requirePerm('discharge.write'), async (req, res) => {
+app.post('/api/patients/:id/discharge-summaries', auth, requirePerm('discharge.write'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
-  const { rows } = await pool.query(
+  const { rows } = await c.query(
     `INSERT INTO discharge_summaries(patient_id,admission_date,discharge_date,attending_provider,discharge_status,reason,final_diagnosis,clinical_course,procedures,discharge_medicines,diet_lifestyle,followup_plan,warning_signs,remarks,authored_by,author_id)
      VALUES($1,$2,COALESCE($3,CURRENT_DATE),$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15) RETURNING *`,
     [req.params.id, b.admissionDate || null, b.dischargeDate || null, b.attendingProvider, b.status, b.reason, b.finalDiagnosis, b.clinicalCourse, b.procedures, b.dischargeMedicines, b.dietLifestyle, b.followupPlan, b.warningSigns, b.remarks, req.auth.user_id]
   );
   await audit(req, 'CREATE_DISCHARGE', 'discharge_summaries', rows[0].discharge_id, req.params.id);
   res.status(201).json(rows[0]);
-});
+}));
 
 // A scheduled appointment for the same doctor that overlaps [start, start+minutes). `ignoreId` excludes the appointment being moved.
 async function findClash(providerId, start, minutes, ignoreId) {
@@ -578,7 +583,7 @@ async function findClash(providerId, start, minutes, ignoreId) {
   return rows[0] || null;
 }
 
-app.post('/api/patients/:id/appointments', auth, requirePerm('appointments.write'), async (req, res) => {
+app.post('/api/patients/:id/appointments', auth, requirePerm('appointments.write'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
   const when = new Date(b.appointmentAt);
   if (!b.appointmentAt || Number.isNaN(when.getTime())) return res.status(400).json({ error: 'Choose a valid date and time' });
@@ -589,13 +594,13 @@ app.post('/api/patients/:id/appointments', auth, requirePerm('appointments.write
     const clash = await findClash(b.providerUser, when, minutes, null);
     if (clash) return res.status(409).json({ error: `${clash.provider_name || 'That doctor'} already has ${clash.name} booked at that time. Book anyway?`, clash: true });
   }
-  const { rows } = await pool.query(
+  const { rows } = await c.query(
     'INSERT INTO appointments(patient_id,appointment_at,provider_user,type,reason,reception_reminder,created_by,duration_minutes) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
     [req.params.id, b.appointmentAt, b.providerUser || null, b.type || null, b.reason || null, b.receptionReminder !== false, req.auth.user_id, minutes]
   );
   await audit(req, 'CREATE_APPOINTMENT', 'appointments', rows[0].appointment_id, req.params.id);
   res.status(201).json(rows[0]);
-});
+}));
 
 app.get('/api/providers', auth, requirePerm('appointments.write'), async (_req, res) => {
   const { rows } = await pool.query(
@@ -604,9 +609,9 @@ app.get('/api/providers', auth, requirePerm('appointments.write'), async (_req, 
   res.json(rows);
 });
 
-app.put('/api/appointments/:id', auth, requirePerm('appointments.write'), async (req, res) => {
+app.put('/api/appointments/:id', auth, requirePerm('appointments.write'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
-  const cur = await pool.query('SELECT * FROM appointments WHERE appointment_id=$1', [req.params.id]);
+  const cur = await c.query('SELECT * FROM appointments WHERE appointment_id=$1', [req.params.id]);
   if (!cur.rows[0]) return res.status(404).json({ error: 'Appointment not found' });
   const a = cur.rows[0];
   if (b.status !== undefined && !['SCHEDULED', 'COMPLETED', 'CANCELLED', 'NO_SHOW'].includes(b.status)) return res.status(400).json({ error: 'Invalid status' });
@@ -624,12 +629,12 @@ app.put('/api/appointments/:id', auth, requirePerm('appointments.write'), async 
     const clash = await findClash(provider, when, minutes, a.appointment_id);
     if (clash) return res.status(409).json({ error: `${clash.provider_name || 'That doctor'} already has ${clash.name} booked at that time. Book anyway?`, clash: true });
   }
-  const { rows } = await pool.query(
+  const { rows } = await c.query(
     'UPDATE appointments SET status=$1, appointment_at=$2, duration_minutes=$3, provider_user=$4, type=COALESCE($5,type), reason=COALESCE($6,reason) WHERE appointment_id=$7 RETURNING appointment_id,patient_id,status,appointment_at,duration_minutes',
     [b.status ?? a.status, when.toISOString(), minutes, provider, b.type ?? null, b.reason ?? null, a.appointment_id]);
   await audit(req, moved ? 'RESCHEDULE_APPOINTMENT' : 'UPDATE_APPOINTMENT', 'appointments', a.appointment_id, a.patient_id, { status: rows[0].status });
   res.json(rows[0]);
-});
+}));
 
 // Registration counts for the dashboard, computed over all patients (the directory list is capped at 100).
 app.get('/api/stats/patients', auth, requirePerm('patients.view'), async (_req, res) => {
@@ -705,188 +710,221 @@ app.get('/api/patients/:id/timeline', auth, requirePerm('clinical.read'), async 
 
 app.get('/api/patients/:id/problems', auth, requirePerm('clinical.read'), async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM patient_problems WHERE patient_id=$1 ORDER BY created_at DESC', [req.params.id]);
+  await audit(req, 'VIEW_PATIENT_MODULE', 'patients', req.params.id, req.params.id, { module: 'problems' });
   res.json(rows);
 });
 
-app.post('/api/patients/:id/problems', auth, requirePerm('chart.write'), async (req, res) => {
+app.post('/api/patients/:id/problems', auth, requirePerm('chart.write'), requiredText('problem'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
-  const r = await pool.query(
+  if (!['ACTIVE', 'RESOLVED', 'HISTORICAL'].includes(b.status || 'ACTIVE')) return res.status(400).json({ error: 'Invalid initial status; use a reasoned correction for existing records' });
+  const r = await c.query(
     `INSERT INTO patient_problems(patient_id,problem,type,onset_date,status,notes,recorded_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
     [req.params.id, b.problem, b.type || 'ACTIVE', b.onsetDate || null, b.status || 'ACTIVE', b.notes || null, req.auth.user_id]
   );
   await audit(req, 'CREATE_PROBLEM', 'patient_problems', r.rows[0].id, req.params.id);
   res.status(201).json(r.rows[0]);
-});
+}));
 
 app.get('/api/patients/:id/allergies', auth, requirePerm('allergies.read'), async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM allergies WHERE patient_id=$1 ORDER BY created_at DESC', [req.params.id]);
+  await audit(req, 'VIEW_PATIENT_MODULE', 'patients', req.params.id, req.params.id, { module: 'allergies' });
   res.json(rows);
 });
 
-app.post('/api/patients/:id/allergies', auth, requirePerm('allergies.write'), async (req, res) => {
+app.post('/api/patients/:id/allergies', auth, requirePerm('allergies.write'), requiredText('allergen'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
-  const r = await pool.query(
+  if (!['ACTIVE'].includes(b.status || 'ACTIVE')) return res.status(400).json({ error: 'Invalid initial status; use a reasoned correction for existing records' });
+  const r = await c.query(
     `INSERT INTO allergies(patient_id,allergen,reaction,severity,recorded_by) VALUES($1,$2,$3,$4,$5) RETURNING *`,
     [req.params.id, b.allergen, b.reaction || null, b.severity || null, req.auth.user_id]
   );
   await audit(req, 'CREATE_ALLERGY', 'allergies', r.rows[0].id, req.params.id);
   res.status(201).json(r.rows[0]);
-});
+}));
 
 app.get('/api/patients/:id/medication-reconciliation', auth, requirePerm('medrec.read'), async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM medication_reconciliation WHERE patient_id=$1 ORDER BY reconciled_at DESC', [req.params.id]);
+  await audit(req, 'VIEW_PATIENT_MODULE', 'patients', req.params.id, req.params.id, { module: 'medication-reconciliation' });
   res.json(rows);
 });
 
-app.post('/api/patients/:id/medication-reconciliation', auth, requirePerm('chart.write'), async (req, res) => {
+app.post('/api/patients/:id/medication-reconciliation', auth, requirePerm('chart.write'), requiredText('medicineName'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
-  const r = await pool.query(
+  const r = await c.query(
     `INSERT INTO medication_reconciliation(patient_id,medicine_name,dose,route,frequency,source,reconciled_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
     [req.params.id, b.medicineName, b.dose || null, b.route || null, b.frequency || null, b.source || null, req.auth.user_id]
   );
+  await audit(req, 'RECONCILE_MEDICATION', 'medication_reconciliation', r.rows[0].id, req.params.id);
   res.status(201).json(r.rows[0]);
-});
+}));
 
 app.get('/api/patients/:id/outcomes', auth, requirePerm('clinical.read'), async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM outcomes WHERE patient_id=$1 ORDER BY assessment_date DESC', [req.params.id]);
+  await audit(req, 'VIEW_PATIENT_MODULE', 'patients', req.params.id, req.params.id, { module: 'outcomes' });
   res.json(rows);
 });
 
-app.post('/api/patients/:id/outcomes', auth, requirePerm('outcomes.write'), async (req, res) => {
+app.post('/api/patients/:id/outcomes', auth, requirePerm('outcomes.write'), requiredText('domain'), patientLinks(pool, 'encounterId'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
-  const r = await pool.query(
-    `INSERT INTO outcomes(patient_id,encounter_id,assessment_date,domain,scale_name,score,unit,narrative,assessor_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-    [req.params.id, b.encounterId || null, b.date || null, b.domain, b.scaleName || null, b.score || null, b.unit || null, b.narrative || null, req.auth.user_id]
+  b.encounterId = await visitForWrite(c, req.params.id, b.encounterId);
+  if (!missing(b.score) && !finiteNumber(b.score)) return res.status(400).json({ error: 'Score must be a finite number' });
+  const r = await c.query(
+    `INSERT INTO outcomes(patient_id,encounter_id,assessment_date,domain,scale_name,score,unit,narrative,assessor_id) VALUES($1,$2,COALESCE($3::date,CURRENT_DATE),$4,$5,$6,$7,$8,$9) RETURNING *`,
+    [req.params.id, b.encounterId || null, b.date || null, b.domain, b.scaleName || null, missing(b.score) ? null : Number(b.score), b.unit || null, b.narrative || null, req.auth.user_id]
   );
+  await audit(req, 'CREATE_OUTCOME', 'outcomes', r.rows[0].id, req.params.id);
   res.status(201).json(r.rows[0]);
-});
+}));
 
 app.get('/api/patients/:id/investigations', auth, requirePerm('clinical.read'), async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM investigations WHERE patient_id=$1 ORDER BY COALESCE(result_date,requested_date) DESC', [req.params.id]);
+  await audit(req, 'VIEW_PATIENT_MODULE', 'patients', req.params.id, req.params.id, { module: 'investigations' });
   res.json(rows);
 });
 
-app.post('/api/patients/:id/investigations', auth, requirePerm('chart.write'), async (req, res) => {
+app.post('/api/patients/:id/investigations', auth, requirePerm('chart.write'), requiredText('testName'), patientLinks(pool, 'encounterId'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
-  const r = await pool.query(
+  b.encounterId = await visitForWrite(c, req.params.id, b.encounterId);
+  const r = await c.query(
     `INSERT INTO investigations(patient_id,encounter_id,investigation_type,test_name,requested_date,result_date,result_summary,result_data,abnormal_flag,ordered_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
     [req.params.id, b.encounterId || null, b.type || null, b.testName, b.requestedDate || null, b.resultDate || null, b.summary || null, b.data == null ? null : J(b.data), b.abnormal || false, req.auth.user_id]
   );
+  await audit(req, 'CREATE_INVESTIGATION', 'investigations', r.rows[0].id, req.params.id);
   res.status(201).json(r.rows[0]);
-});
+}));
 
 app.get('/api/patients/:id/exams', auth, requirePerm('clinical.read'), async (req, res) => {
   const { rows } = await pool.query(
     `SELECT er.*,et.name template_name FROM exam_results er LEFT JOIN exam_templates et ON et.id=er.template_id WHERE er.patient_id=$1 ORDER BY er.created_at DESC`,
     [req.params.id]
   );
+  await audit(req, 'VIEW_PATIENT_MODULE', 'patients', req.params.id, req.params.id, { module: 'exams' });
   res.json(rows);
 });
 
-app.post('/api/patients/:id/exams', auth, requirePerm('chart.write'), async (req, res) => {
+app.post('/api/patients/:id/exams', auth, requirePerm('chart.write'), patientLinks(pool, 'encounterId'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
-  const r = await pool.query(
+  b.encounterId = await visitForWrite(c, req.params.id, b.encounterId);
+  const r = await c.query(
     `INSERT INTO exam_results(patient_id,encounter_id,template_id,findings,examiner_id) VALUES($1,$2,$3,$4,$5) RETURNING *`,
     [req.params.id, b.encounterId || null, b.templateId || null, J(b.findings ?? {}), req.auth.user_id]
   );
+  await audit(req, 'CREATE_EXAM', 'exam_results', r.rows[0].id, req.params.id);
   res.status(201).json(r.rows[0]);
-});
+}));
 
 app.get('/api/exam-templates', auth, requirePerm('clinical.read'), async (_req, res) => {
   const { rows } = await pool.query('SELECT * FROM exam_templates WHERE active ORDER BY name');
   res.json(rows);
 });
 
-app.post('/api/exam-templates', auth, requirePerm('templates.write'), async (req, res) => {
+app.post('/api/exam-templates', auth, requirePerm('templates.write'), requiredText('name'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
-  const r = await pool.query(
+  const r = await c.query(
     'INSERT INTO exam_templates(name,specialty,fields) VALUES($1,$2,$3) RETURNING *',
     [b.name, b.specialty || null, J(b.fields ?? [])]
   );
+  await audit(req, 'CREATE_EXAM_TEMPLATE', 'exam_templates', r.rows[0].id);
   res.status(201).json(r.rows[0]);
-});
+}));
 
 app.get('/api/patients/:id/referrals', auth, requirePerm('clinical.read'), async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM referrals WHERE patient_id=$1 ORDER BY referral_date DESC', [req.params.id]);
+  await audit(req, 'VIEW_PATIENT_MODULE', 'patients', req.params.id, req.params.id, { module: 'referrals' });
   res.json(rows);
 });
 
-app.post('/api/patients/:id/referrals', auth, requirePerm('chart.write'), async (req, res) => {
+app.post('/api/patients/:id/referrals', auth, requirePerm('chart.write'), requiredText('referredTo'), patientLinks(pool, 'encounterId'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
-  const r = await pool.query(
+  b.encounterId = await visitForWrite(c, req.params.id, b.encounterId);
+  const r = await c.query(
     `INSERT INTO referrals(patient_id,encounter_id,referred_to,specialty,reason,urgency,status,referral_date,followup_date,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-    [req.params.id, b.encounterId || null, b.referredTo || null, b.specialty || null, b.reason || null, b.urgency || null, b.status || 'PENDING', b.referralDate || null, b.followupDate || null, req.auth.user_id]
+    [req.params.id, b.encounterId || null, b.referredTo || null, b.specialty || null, b.reason || null, b.urgency || null, b.status || 'PENDING', b.referralDate || new Date().toISOString().slice(0, 10), b.followupDate || null, req.auth.user_id]
   );
+  await audit(req, 'CREATE_REFERRAL', 'referrals', r.rows[0].id, req.params.id);
   res.status(201).json(r.rows[0]);
-});
+}));
 
 app.get('/api/patients/:id/care-plans', auth, requirePerm('clinical.read'), async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM care_plans WHERE patient_id=$1 ORDER BY created_at DESC', [req.params.id]);
+  await audit(req, 'VIEW_PATIENT_MODULE', 'patients', req.params.id, req.params.id, { module: 'care-plans' });
   res.json(rows);
 });
 
-app.post('/api/patients/:id/care-plans', auth, requirePerm('chart.write'), async (req, res) => {
+app.post('/api/patients/:id/care-plans', auth, requirePerm('chart.write'), patientLinks(pool, 'encounterId'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
-  const r = await pool.query(
+  b.encounterId = await visitForWrite(c, req.params.id, b.encounterId);
+  const r = await c.query(
     `INSERT INTO care_plans(patient_id,encounter_id,plan_type,goals,interventions,monitoring,review_date,status,author_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
     [req.params.id, b.encounterId || null, b.planType || 'INTEGRATED', J(b.goals ?? []), J(b.interventions ?? []), J(b.monitoring ?? []), b.reviewDate || null, b.status || 'ACTIVE', req.auth.user_id]
   );
+  await audit(req, 'CREATE_CARE_PLAN', 'care_plans', r.rows[0].id, req.params.id);
   res.status(201).json(r.rows[0]);
-});
+}));
 
 app.get('/api/patients/:id/treatment-sessions', auth, requirePerm('clinical.read'), async (req, res) => {
   const { rows } = await pool.query(
     `SELECT ts.*, u.display_name AS practitioner_name, pt.treatment_name FROM treatment_sessions ts
      LEFT JOIN users u ON u.user_id=ts.practitioner_id LEFT JOIN prescription_treatments pt ON pt.row_id=ts.prescription_treatment_id
      WHERE ts.patient_id=$1 ORDER BY ts.session_date DESC, ts.start_time DESC NULLS LAST, ts.created_at DESC`, [req.params.id]);
+  await audit(req, 'VIEW_PATIENT_MODULE', 'patients', req.params.id, req.params.id, { module: 'treatment-sessions' });
   res.json(rows);
 });
 
-app.post('/api/patients/:id/treatment-sessions', auth, requirePerm('sessions.write'), async (req, res) => {
+app.post('/api/patients/:id/treatment-sessions', auth, requirePerm('sessions.write'), patientLinks(pool, 'prescriptionTreatmentId'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
+  await checkPrescriptionLine(c, req.params.id, b.prescriptionTreatmentId, 'treatment');
   if (!['COMPLETED', 'PLANNED', 'CANCELLED'].includes(b.status || 'COMPLETED')) return res.status(400).json({ error: 'Invalid session status' });
-  const r = await pool.query(
+  const r = await c.query(
     `INSERT INTO treatment_sessions(patient_id,prescription_treatment_id,session_date,start_time,end_time,practitioner_id,pre_assessment,procedure_notes,materials,tolerance,adverse_event,post_assessment,response,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
     [req.params.id, b.prescriptionTreatmentId || null, b.sessionDate || new Date().toISOString().slice(0, 10), b.startTime || null, b.endTime || null, req.auth.user_id, b.preAssessment || null, b.procedureNotes || null, b.materials || null, b.tolerance || null, b.adverseEvent || null, b.postAssessment || null, b.response || null, b.status || 'COMPLETED']
   );
+  await audit(req, 'CREATE_TREATMENT_SESSION', 'treatment_sessions', r.rows[0].id, req.params.id);
   res.status(201).json(r.rows[0]);
-});
+}));
 
 app.get('/api/patients/:id/administrations', auth, requirePerm('clinical.read'), async (req, res) => {
   const { rows } = await pool.query(
     `SELECT ma.*, u.display_name AS administered_by_name, pm.medicine_name FROM medication_administration ma
      LEFT JOIN users u ON u.user_id=ma.administered_by LEFT JOIN prescription_medicines pm ON pm.row_id=ma.prescription_medicine_id
      WHERE ma.patient_id=$1 ORDER BY COALESCE(ma.administered_at,ma.scheduled_at) DESC`, [req.params.id]);
+  await audit(req, 'VIEW_PATIENT_MODULE', 'patients', req.params.id, req.params.id, { module: 'administrations' });
   res.json(rows);
 });
 
-app.post('/api/patients/:id/administrations', auth, requirePerm('chart.write'), async (req, res) => {
+app.post('/api/patients/:id/administrations', auth, requirePerm('chart.write'), patientLinks(pool, 'prescriptionMedicineId'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
-  const r = await pool.query(
+  await checkPrescriptionLine(c, req.params.id, b.prescriptionMedicineId, 'medicine');
+  if (b.status !== undefined && !['GIVEN', 'REFUSED', 'HELD', 'NOT_GIVEN'].includes(b.status)) return res.status(400).json({ error: 'Invalid administration status' });
+  const r = await c.query(
     `INSERT INTO medication_administration(prescription_medicine_id,patient_id,scheduled_at,administered_at,dose,route,administered_by,status,response,adverse_event,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
     [b.prescriptionMedicineId || null, req.params.id, b.scheduledAt || null, b.administeredAt || new Date(), b.dose || null, b.route || null, req.auth.user_id, b.status || 'GIVEN', b.response || null, b.adverseEvent || null, b.notes || null]
   );
+  await audit(req, 'CREATE_MEDICATION_ADMINISTRATION', 'medication_administration', r.rows[0].id, req.params.id);
   res.status(201).json(r.rows[0]);
-});
+}));
 
 app.get('/api/patients/:id/discharge', auth, requirePerm('clinical.read'), async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM discharge_summaries WHERE patient_id=$1 ORDER BY created_at DESC', [req.params.id]);
+  await audit(req, 'VIEW_PATIENT_MODULE', 'patients', req.params.id, req.params.id, { module: 'discharge' });
   res.json(rows);
 });
 
-app.post('/api/patients/:id/discharge', auth, requirePerm('discharge.write'), async (req, res) => {
+app.post('/api/patients/:id/discharge', auth, requirePerm('discharge.write'), patientLinks(pool, 'encounterId'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
-  const r = await pool.query(
+  b.encounterId = await visitForWrite(c, req.params.id, b.encounterId);
+  const r = await c.query(
     `INSERT INTO discharge_summaries(patient_id,encounter_id,author_id,authored_by,admission_summary,diagnoses,procedures_data,medicines,treatment_course,condition_at_discharge,followup_plan,warnings,signed_at) VALUES($1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10,$11,now()) RETURNING *`,
     [req.params.id, b.encounterId || null, req.auth.user_id, b.admissionSummary || null, J(b.diagnoses ?? []), J(b.procedures ?? []), J(b.medicines ?? []), b.treatmentCourse || null, b.conditionAtDischarge || null, b.followupPlan || null, b.warnings || null]
   );
   await audit(req, 'CREATE_DISCHARGE', 'discharge_summaries', r.rows[0].discharge_id, req.params.id);
   res.status(201).json(r.rows[0]);
-});
+}));
 
 app.get('/api/patients/:id/billing', auth, requirePerm('billing.read'), async (req, res) => {
   const a = await pool.query('SELECT * FROM billing_accounts WHERE patient_id=$1 ORDER BY account_date DESC', [req.params.id]);
   const items = await pool.query(`SELECT bi.* FROM billing_items bi JOIN billing_accounts ba ON ba.id=bi.account_id WHERE ba.patient_id=$1 ORDER BY bi.created_at DESC`, [req.params.id]);
+  await audit(req, 'VIEW_PATIENT_MODULE', 'patients', req.params.id, req.params.id, { module: 'billing' });
   res.json({ accounts: a.rows, items: items.rows });
 });
 
@@ -896,10 +934,11 @@ app.post('/api/patients/:id/billing', auth, requirePerm('billing.write'), async 
     await c.query('BEGIN');
     const inv = 'INV-' + Date.now() + '-' + crypto.randomBytes(2).toString('hex').toUpperCase();
     const items = Array.isArray(b.items) ? b.items : [];
-    if (!items.length || items.some(i => !hasText(i?.description) || !nonNeg(i.quantity) || !nonNeg(i.unitPrice)))
-      { await c.query('ROLLBACK'); return res.status(400).json({ error: 'Each invoice line needs a description and non-negative quantity and price' }); }
+    if (!items.length || items.some(i => !hasText(i?.description) || !finiteNumber(i.quantity) || Number(i.quantity) <= 0 || !finiteNumber(i.unitPrice) || Number(i.unitPrice) < 0))
+      { await c.query('ROLLBACK'); return res.status(400).json({ error: 'Each invoice line needs a description and a positive quantity and non-negative price' }); }
     if (!nonNeg(b.discount) || !nonNeg(b.tax)) { await c.query('ROLLBACK'); return res.status(400).json({ error: 'Discount and tax cannot be negative' }); }
-    const total = items.reduce((x, i) => x + Number(i.quantity || 1) * Number(i.unitPrice || 0), 0);
+    const total = items.reduce((x, i) => x + Number(i.quantity) * Number(i.unitPrice || 0), 0);
+    if (Number(b.discount || 0) > total + Number(b.tax || 0)) { await c.query('ROLLBACK'); return res.status(400).json({ error: 'Discount cannot exceed the invoice amount' }); }
     const a = await c.query(
       `INSERT INTO billing_accounts(patient_id,payer_type,invoice_number,status,subtotal,discount,tax,total,notes,created_by) VALUES($1,$2,$3,'OPEN',$4,$5,$6,$7,$8,$9) RETURNING *`,
       [req.params.id, b.payerType || 'SELF-PAY', inv, total, Number(b.discount || 0), Number(b.tax || 0), total - Number(b.discount || 0) + Number(b.tax || 0), b.notes || null, req.auth.user_id]
@@ -907,7 +946,7 @@ app.post('/api/patients/:id/billing', auth, requirePerm('billing.write'), async 
     for (const i of items) {
       await c.query(
         `INSERT INTO billing_items(account_id,description,category,quantity,unit_price,amount) VALUES($1,$2,$3,$4,$5,$6)`,
-        [a.rows[0].id, i.description, i.category || null, Number(i.quantity || 1), Number(i.unitPrice || 0), Number(i.quantity || 1) * Number(i.unitPrice || 0)]
+        [a.rows[0].id, i.description, i.category || null, Number(i.quantity), Number(i.unitPrice || 0), Number(i.quantity) * Number(i.unitPrice || 0)]
       );
     }
     await audit(c, { userId: req.auth.user_id, sessionId: req.auth.session_id, action: 'CREATE_INVOICE', tableName: 'billing_accounts', recordId: a.rows[0].id, req, details: { invoice: inv, total: a.rows[0].total } });
@@ -942,27 +981,30 @@ app.get('/api/billing/invoices', auth, requirePerm('billing.read'), async (req, 
   res.json({ summary: sum.rows[0], invoices: list.rows });
 });
 
-app.put('/api/billing/:id', auth, requirePerm('billing.write'), async (req, res) => {
+app.put('/api/billing/:id', auth, requirePerm('billing.write'), transactional(pool, async (req, res, c) => {
   const { status } = req.body || {};
   if (!['OPEN', 'PAID', 'VOID'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
-  const { rows } = await pool.query('UPDATE billing_accounts SET status=$1 WHERE id=$2 RETURNING id,patient_id,invoice_number,status', [status, req.params.id]);
+  const { rows } = await c.query('UPDATE billing_accounts SET status=$1 WHERE id=$2 RETURNING id,patient_id,invoice_number,status', [status, req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: 'Invoice not found' });
   await audit(req, 'UPDATE_INVOICE_STATUS', 'billing_accounts', rows[0].id, rows[0].patient_id, { status, invoice: rows[0].invoice_number });
   res.json(rows[0]);
-});
+}));
 
 app.get('/api/patients/:id/documents', auth, requirePerm('documents.read'), async (req, res) => {
   const { rows } = await pool.query('SELECT id,patient_id,document_type,file_name,mime_type,uploaded_by,uploaded_at FROM documents WHERE patient_id=$1 ORDER BY uploaded_at DESC', [req.params.id]);
+  await audit(req, 'VIEW_PATIENT_MODULE', 'patients', req.params.id, req.params.id, { module: 'documents' });
   res.json(rows);
 });
 
-app.post('/api/patients/:id/documents', auth, requirePerm('documents.write'), upload.single('file'), async (req, res) => {
+app.post('/api/patients/:id/documents', auth, requirePerm('documents.write'), upload.single('file'), transactional(pool, async (req, res, c) => {
   if (!req.file) return res.status(400).json({ error: 'File required' });
+  req.onRollback = () => fs.promises.unlink(req.file.path).catch(() => {});
+  const mimeType = await validateUpload(req.file);
   let r;
   try {
-    r = await pool.query(
+    r = await c.query(
       `INSERT INTO documents(patient_id,document_type,file_name,storage_key,mime_type,uploaded_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,patient_id,document_type,file_name,mime_type,uploaded_at`,
-      [req.params.id, req.body.documentType || 'OTHER', req.file.originalname, req.file.filename, req.file.mimetype, req.auth.user_id]
+      [req.params.id, req.body.documentType || 'OTHER', req.file.originalname, req.file.filename, mimeType, req.auth.user_id]
     );
   } catch (e) {
     fs.unlink(req.file.path, () => {}); // don't leave an orphan file when the record could not be saved
@@ -970,7 +1012,7 @@ app.post('/api/patients/:id/documents', auth, requirePerm('documents.write'), up
   }
   await audit(req, 'UPLOAD_DOCUMENT', 'documents', r.rows[0].id, req.params.id);
   res.status(201).json(r.rows[0]);
-});
+}));
 
 app.get('/api/documents/:id/download', auth, requirePerm('documents.read'), async (req, res) => {
   const r = await pool.query('SELECT * FROM documents WHERE id=$1', [req.params.id]);
@@ -985,19 +1027,24 @@ app.get('/api/documents/:id/download', auth, requirePerm('documents.read'), asyn
 
 app.get('/api/patients/:id/contacts', auth, requirePerm('contacts.read'), async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM patient_contacts WHERE patient_id=$1 ORDER BY contact_date DESC', [req.params.id]);
+  await audit(req, 'VIEW_PATIENT_MODULE', 'patients', req.params.id, req.params.id, { module: 'contacts' });
   res.json(rows);
 });
 
-app.post('/api/patients/:id/contacts', auth, requirePerm('contacts.write'), async (req, res) => {
+app.post('/api/patients/:id/contacts', auth, requirePerm('contacts.write'), transactional(pool, async (req, res, c) => {
   const b = req.body || {};
-  const r = await pool.query(
+  const r = await c.query(
     `INSERT INTO patient_contacts(patient_id,contact_type,subject,notes,outcome,created_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,
     [req.params.id, b.type || 'TELEPHONE', b.subject || null, b.notes || null, b.outcome || null, req.auth.user_id]
   );
+  await audit(req, 'CREATE_CONTACT', 'patient_contacts', r.rows[0].id, req.params.id);
   res.status(201).json(r.rows[0]);
-});
+}));
 
-app.get('/healthz', (_req, res) => res.send('ok'));
+app.get('/healthz', async (_req, res) => {
+  try { await pool.query('SELECT 1'); await fs.promises.access(STORAGE_DIR, fs.constants.R_OK | fs.constants.W_OK); res.send('ok'); }
+  catch { res.status(503).send('unavailable'); }
+});
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
