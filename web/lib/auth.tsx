@@ -1,6 +1,6 @@
 "use client";
 import { createContext, useCallback, useContext, useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
-import { api, session, UNAUTHORIZED_EVENT } from "./api";
+import { api, EXPIRED_KEY, session, UNAUTHORIZED_EVENT } from "./api";
 import type { LoginResponse, Perm, SessionUser } from "./types";
 
 interface AuthState {
@@ -15,6 +15,7 @@ interface AuthState {
 }
 
 const AuthContext = createContext<AuthState | null>(null);
+let signingOut = false; // a 401 from the logout call itself must not look like an expired session
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
@@ -38,7 +39,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [raw]);
 
   useEffect(() => {
-    const onUnauthorized = () => session.clear();
+    const onUnauthorized = () => {
+      if (signingOut) return;
+      const path = window.location.pathname;
+      session.clear();
+      try { sessionStorage.setItem(EXPIRED_KEY, path); } catch {}
+    };
     window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, []);
@@ -50,8 +56,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    signingOut = true;
     try { await api("/api/auth/logout", { method: "POST", body: {} }); } catch {}
     session.clear();
+    signingOut = false;
   }, []);
 
   const hasRole = useCallback((...roles: string[]) => !!user?.roles.some(r => roles.includes(r)), [user]);

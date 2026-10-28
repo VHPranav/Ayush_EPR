@@ -5,5 +5,10 @@ export const fmtDate = (v: string | null | undefined) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
   return (m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date(v)).toLocaleDateString();
 };
-export const fmtDateTime = (v: string | null | undefined) => (v ? new Date(v).toLocaleString() : "—");
+// 24-hour, no seconds, everywhere (the OS time picker may show 12-hour, but every list and confirmation reads the same).
+export const fmtDateTime = (v: string | null | undefined) => (v ? new Date(v).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short", hour12: false }) : "—");
 export const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong");
+
+/** Currency symbol for invoices; set NEXT_PUBLIC_CURRENCY at build time (default ₹). */
+export const CURRENCY = process.env.NEXT_PUBLIC_CURRENCY || "₹";
+export const money = (v: number | string | null | undefined) => `${CURRENCY}${Number(v ?? 0).toFixed(2)}`;

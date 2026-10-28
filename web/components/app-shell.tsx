@@ -5,12 +5,14 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useSyncExternalStore, type ReactNode } from "react";
 import {
   CalendarDays, ChevronsLeft, ChevronsRight, ClipboardList, FileCheck2, FileText, FolderOpen, History, LayoutDashboard, Leaf, ListChecks,
-  LogOut, Package, Receipt, ShieldCheck, Stethoscope, UserPlus, UsersRound, X, type LucideIcon,
+  LogOut, Package, Pill, Receipt, ShieldCheck, Stethoscope, UserPlus, UsersRound, X, type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { PatientProvider, usePatient } from "@/lib/patient";
 import type { Perm } from "@/lib/types";
 import { sidebarPref } from "@/lib/ui-prefs";
+import { roleLabel } from "@/lib/roles";
+import { DEMO } from "@/lib/api";
 import { GlobalSearch } from "./global-search";
 import { Avatar, Card, Empty } from "./ui";
 
@@ -21,7 +23,8 @@ const NAV: { section?: string; items: NavItem[] }[] = [
   {
     section: "Front desk",
     items: [
-      { href: "/reception", label: "Reception", icon: UserPlus, perm: "patients.view" },
+      { href: "/reception", label: "Patients", icon: UserPlus, perm: "patients.view" },
+      { href: "/record-management", label: "Record management", icon: FileCheck2, perm: "patients.view" },
       { href: "/appointments", label: "Appointments", icon: CalendarDays, perm: "appointments.read" },
       { href: "/billing", label: "Billing", icon: Receipt, perm: "billing.read" },
       { href: "/documents", label: "Documents", icon: FolderOpen, perm: "documents.read" },
@@ -41,6 +44,7 @@ const NAV: { section?: string; items: NavItem[] }[] = [
   {
     section: "Pharmacy & catalogue",
     items: [
+      { href: "/dispensing", label: "Dispensing", icon: Pill, perm: "pharmacy.write" },
       { href: "/pharmacy", label: "Pharmacy", icon: Package, perm: "pharmacy.read" },
       { href: "/treatment-master", label: "Treatment Master", icon: ListChecks, perm: "treatments.read" },
     ],
@@ -146,6 +150,7 @@ function TopBar() {
     <div className="flex flex-wrap items-center gap-3 px-4 pb-3 pt-4 md:px-8 md:pt-6">
       <GlobalSearch />
       <div className="ml-auto flex items-center gap-3">
+        {DEMO && <span className="hidden whitespace-nowrap rounded-lg bg-warn-soft px-2.5 py-1.5 text-xs font-semibold text-warn sm:inline-block">Demo · sample data, view only</span>}
         {patient && (
           <div className="flex items-center gap-2.5 rounded-xl bg-white py-1.5 pl-1.5 pr-2 shadow-card">
             <Avatar name={patient.name} size={30} />
@@ -161,13 +166,19 @@ function TopBar() {
             <Avatar name={user.name} size={38} />
             <div className="hidden min-w-0 lg:block">
               <div className="truncate text-sm font-semibold leading-tight text-ink">{user.name}</div>
-              <div className="truncate text-xs leading-tight text-muted">{user.roles.join(", ").replaceAll("_", " ").toLowerCase()}</div>
+              <div className="truncate text-xs leading-tight text-muted">{user.roles.map(roleLabel).join(", ")}</div>
             </div>
           </div>
         )}
       </div>
     </div>
   );
+}
+
+function PatientPageBoundary({ children }: { children: ReactNode }) {
+  const { patient, switching } = usePatient();
+  if (switching) return <div role="status" className="rounded-xl bg-white p-6 text-sm text-muted">Opening patient chart…</div>;
+  return <div key={patient?.patient_id ?? "no-patient"}>{children}</div>;
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -194,7 +205,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <main className="min-h-0 flex-1 overflow-y-auto px-4 pb-10 pt-3 md:px-8">
             <div className="mx-auto max-w-[1400px]">
               {/* Once the user is known, a page they lack permission for is not rendered at all (so it makes no API calls). */}
-              {ready && user && ROUTE_PERMS.get(pathname) && !can(ROUTE_PERMS.get(pathname)!) ? <NoAccess /> : children}
+              {ready && user && ROUTE_PERMS.get(pathname) && !can(ROUTE_PERMS.get(pathname)!) ? <NoAccess /> : <PatientPageBoundary>{children}</PatientPageBoundary>}
             </div>
           </main>
         </div>

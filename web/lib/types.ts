@@ -46,49 +46,74 @@ export interface ClinicalPayload {
 }
 
 export interface ClinicalRecord {
+  version?: number;
+  amended_from?: string | null;
+  amendment_reason?: string | null;
+  signed_at?: string | null;
+  encounter_id?: string | null;
+  author_name?: string | null;
   record_id: string;
   section: string;
   payload: ClinicalPayload | null;
   created_at: string;
 }
 
+export interface RxMedicine { row_id?: string; form?: string | null; medicine_name: string; dose: string | null; frequency: string | null; instructions: string | null }
+export interface RxTreatment { row_id?: string; treatment_name: string; frequency: string | null; duration: string | null }
 export interface Prescription {
   prescription_id: string;
   prescription_no: string;
   prescribed_at: string;
   status: string;
+  notes?: string | null;
+  medicines?: RxMedicine[];
+  treatments?: RxTreatment[];
 }
 
+export interface Encounter { encounter_id: string; encounter_type: string; status: string; started_at: string; ended_at: string | null }
+
 export interface Patient extends PatientSummary {
+  address?: string | null;
+  encounters?: Encounter[];
   email: string | null;
+  /** Active allergies; only sent to roles that may read them. */
+  allergies?: { id: string; allergen: string; reaction: string | null; severity: string | null }[];
   clinicalRecords: ClinicalRecord[];
   prescriptions: Prescription[];
+  letters?: unknown[];
+  discharges?: unknown[];
+  appointments?: unknown[];
 }
 
 export interface TimelineEvent { event_time: string; event_type: string; event_id: string; title: string | null; detail: string | null }
+export interface Administration { id: string; administered_at: string | null; status: string; dose: string | null; notes: string | null; adverse_event: string | null; medicine_name: string | null; administered_by_name: string | null }
+export interface VitalsPayload { bp?: string; pulse?: string; temp?: string; spo2?: string; height?: string; weight?: string; bmi?: string; rr?: string }
 export interface Problem { id: string; problem: string; status: string; notes: string | null }
-export interface Allergy { id: string; allergen: string; reaction: string | null; severity: string | null }
+export interface Allergy { status?: string; id: string; allergen: string; reaction: string | null; severity: string | null }
 export interface MedRec { id: string; medicine_name: string; dose: string | null; route: string | null; frequency: string | null }
 export interface Investigation { id: string; test_name: string; result_summary: string | null }
 export interface Outcome { id: string; domain: string; scale_name: string | null; score: number | string | null; narrative: string | null }
 export interface Referral { id: string; specialty: string | null; referred_to: string | null; status: string; reason: string | null }
 export interface CarePlan { id: string; plan_type: string; review_date: string | null; status: string }
-export interface TreatmentSession { id: string; session_date: string; start_time: string | null; end_time: string | null; status: string; procedure_notes: string | null }
+export interface TreatmentSession { id: string; session_date: string; start_time: string | null; end_time: string | null; status: string; procedure_notes: string | null; pre_assessment?: string | null; post_assessment?: string | null; tolerance?: string | null; adverse_event?: string | null; response?: string | null; materials?: string | null; practitioner_name?: string | null; treatment_name?: string | null }
 export interface PatientDocument { id: string; document_type: string; file_name: string; uploaded_at: string }
-export interface BillingAccount { id: string; invoice_number: string; total: number | string; status: string }
+export interface BillingAccount { id: string; invoice_number: string; total: number | string; status: string; account_date?: string; subtotal?: number | string; discount?: number | string; tax?: number | string }
+export interface BillingItem { id: string; account_id: string; description: string; category: string | null; quantity: number | string; unit_price: number | string; amount: number | string }
 export interface Discharge { id?: string; summary_date?: string; discharge_date?: string; followup_plan: string | null }
 export interface StockItem {
   stock_id: string;
-  medicine_name: string; form: string | null; batch_no: string | null; expiry_date: string | null;
-  quantity: number | string; unit: string | null; reorder_level: number | string;
-  low_stock?: boolean;
+  medicine_name: string; form: string | null; strength?: string | null; batch_no: string | null; expiry_date: string | null;
+  quantity: number | string; unit: string | null; reorder_level: number | string; supplier?: string | null; location?: string | null;
+  low_stock?: boolean; expired?: boolean;
 }
 export interface TreatmentMaster {
   treatment_id: string; name: string; category: string | null;
-  default_frequency: string | null; default_duration: string | null;
+  default_frequency: string | null; default_duration: string | null; instructions?: string | null;
 }
-export interface FollowUp { appointment_at: string; name: string; uhid: string; type: string | null; reason: string | null }
-export interface AuditEntry { event_time: string; action: string; table_name: string | null; record_id: string | null }
+export interface FollowUp { provider_user?: string | null; provider_name?: string | null; appointment_id?: string; patient_id?: string; appointment_at: string; name: string; uhid: string; type: string | null; reason: string | null }
+export interface InvoiceRow { id: string; invoice_number: string; account_date: string; status: string; total: number | string; payer_type: string | null; patient_id: string; name: string; uhid: string }
+export interface InvoiceSummary { open_count: number; open_total: number | string; invoiced_month: number | string; paid_month: number | string }
+export interface AuditEntry { details?: Record<string, unknown> | null; ip_address?: string | null; audit_id?: number; event_time: string; action: string; table_name: string | null; record_id: string | null; username?: string | null; display_name?: string | null }
 
 export interface ManagedUser {
   user_id: string;
@@ -100,4 +125,9 @@ export interface ManagedUser {
   last_login: string | null;
   /** Still using the old unsalted hash (e.g. the seeded dev accounts): the password should be reset. */
   legacy_password: boolean;
+}
+
+export interface CalAppt {
+  appointment_id: string; patient_id: string; appointment_at: string; duration_minutes: number; type: string | null; reason: string | null;
+  status: string; provider_user: string | null; provider_name: string | null; name: string; uhid: string;
 }

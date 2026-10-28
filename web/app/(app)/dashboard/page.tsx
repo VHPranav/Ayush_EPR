@@ -5,24 +5,28 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AreaChart, Delta, type Point } from "@/components/charts";
 import { Avatar, Button, Card, Empty, PageHead, Pill, StatCard, Table, Td } from "@/components/ui";
 import { useAuth } from "@/lib/auth";
-import { errMsg, fmtDate, fmtDateTime } from "@/lib/format";
+import { errMsg, fmtDate, fmtDateTime, money as fmtMoney } from "@/lib/format";
+import { actionLabel, detailText } from "@/lib/audit-labels";
 import { usePatient } from "@/lib/patient";
 import { patientHome } from "@/lib/permissions";
+import { roleLabel } from "@/lib/roles";
 import { useToast } from "@/lib/toast";
-import type { AuditEntry, FollowUp, PatientSummary, StockItem } from "@/lib/types";
+import type { AuditEntry, FollowUp, InvoiceRow, InvoiceSummary, PatientSummary, StockItem } from "@/lib/types";
 import { useFetch } from "@/lib/use-fetch";
 
 type Range = 6 | 12;
 const monthKey = (d: Date) => d.getFullYear() * 12 + d.getMonth();
 const DAY = 86_400_000;
+// "Dr. Kavita Rao" -> "Kavita" (skip honorifics when greeting)
+const firstName = (full: string) => full.replace(/^(dr|nurse|mr|mrs|ms|prof)\.?\s+/i, "").split(" ")[0];
 
-/** Registrations per calendar month for the last `months` months (oldest first). */
-function monthlyRegistrations(patients: PatientSummary[], months: number): Point[] {
+/** Registrations per calendar month for the last `months` months (oldest first), from the server's per-month counts. */
+function monthlySeries(rows: { month: string; n: number }[], months: number): Point[] {
   const base = monthKey(new Date());
   const counts = new Map<number, number>();
-  for (const p of patients) {
-    const k = monthKey(new Date(p.registered_at));
-    counts.set(k, (counts.get(k) ?? 0) + 1);
+  for (const r of rows) {
+    const [y, m] = r.month.split("-").map(Number);
+    counts.set(y * 12 + (m - 1), r.n);
   }
   return Array.from({ length: months }, (_, i) => {
     const k = base - (months - 1 - i);
@@ -52,18 +56,24 @@ export default function DashboardPage() {
   }, []);
 
   // Each source is only requested when the role may read it, so no widget ever shows a 403.
-  const showPatients = can("patients.view");
-  const showChart = can("patients.register") || can("billing.read");
+  const dispenser = can("pharmacy.write"); // pharmacist: the dashboard is about dispensing and stock, not registrations
+  const showMoney = can("billing.read");
+  // Finance and the pharmacist have no patient-flow duties, so their dashboards skip registration figures.
+  const showPatients = can("patients.view") && !dispenser && !(showMoney && !can("appointments.read"));
+  const showChart = showPatients && (can("patients.register") || can("billing.read"));
   const showAppts = can("appointments.read");
   const showStock = can("pharmacy.read");
   const showAudit = can("audit.read");
 
   const patients = useFetch<PatientSummary[]>(showPatients ? "/api/patients?q=" : null);
+  const stats = useFetch<{ total: number; months: { month: string; n: number }[] }>(showPatients ? "/api/stats/patients" : null);
   const followups = useFetch<FollowUp[]>(showAppts ? "/api/reception/followups?days=14" : null);
   const stock = useFetch<StockItem[]>(showStock ? "/api/pharmacy/stock" : null);
+  const queue = useFetch<unknown[]>(dispenser ? "/api/pharmacy/queue" : null);
+  const money = useFetch<{ summary: InvoiceSummary; invoices: InvoiceRow[] }>(showMoney ? "/api/billing/invoices?status=OPEN" : null);
   const audit = useFetch<AuditEntry[]>(showAudit ? "/api/audit" : null);
 
-  const series = useMemo(() => (patients.data ? monthlyRegistrations(patients.data, range) : null), [patients.data, range]);
+  const series = useMemo(() => (stats.data ? monthlySeries(stats.data.months, range) : null), [stats.data, range]);
   const thisMonth = series?.[series.length - 1]?.value ?? 0;
   const lastMonth = series?.[series.length - 2]?.value ?? 0;
 
@@ -81,13 +91,24 @@ export default function DashboardPage() {
 
   const cards: ReactNode[] = [];
   if (showPatients) {
-    cards.push(<StatCard key="p" label="Patients" value={num(patients, patients.data && patients.data.length >= 100 ? "100+" : patients.data?.length ?? 0)} />);
+    cards.push(<StatCard key="p" label="Patients" value={num(stats, stats.data?.total ?? 0)} />);
     cards.push(
-      <StatCard key="n" label="New this month" value={num(patients, thisMonth)}
-        hint={!patients.loading && !patients.error ? <Delta value={thisMonth - lastMonth} label=" vs last month" /> : null} />,
+      <StatCard key="n" label="New this month" value={num(stats, thisMonth)}
+        hint={!stats.loading && !stats.error ? <Delta value={thisMonth - lastMonth} label=" vs last month" /> : null} />,
     );
   }
   if (showAppts) cards.push(<StatCard key="a" label="Appointments · 14 days" value={num(followups, followups.data?.length ?? 0)} />);
+  if (showMoney) {
+    const s = money.data?.summary;
+    cards.push(<StatCard key="out" label="Outstanding" value={num(money, s ? fmtMoney(s.open_total) : 0)} hint={s?.open_count ? <Link href="/billing" className="font-semibold text-brand hover:underline">{s.open_count} open invoice{s.open_count === 1 ? "" : "s"}</Link> : null} />);
+    cards.push(<StatCard key="inv" label="Invoiced this month" value={num(money, s ? fmtMoney(s.invoiced_month) : 0)} />);
+  }
+  if (dispenser) {
+    cards.push(
+      <StatCard key="q" label="Prescriptions to dispense" value={num(queue, queue.data?.length ?? 0)}
+        hint={queue.data?.length ? <Link href="/dispensing" className="font-semibold text-brand hover:underline">Open dispensing</Link> : null} />,
+    );
+  }
   if (showStock) {
     cards.push(
       <StatCard key="l" label="Low-stock medicines" value={num(stock, lowStock.length)}
@@ -120,13 +141,18 @@ export default function DashboardPage() {
     <Card title="Upcoming appointments" bodyClass="p-0">
       {followups.error ? <Empty>Could not load: {followups.error}</Empty> : followups.loading ? <Empty>Loading…</Empty> : followups.data?.length ? (
         <ul className="m-0 list-none divide-y divide-line p-0">
-          {followups.data.slice(0, 6).map((a, i) => (
-            <li key={i} className="flex items-center gap-3 px-5 py-3.5">
-              <Avatar name={a.name} size={34} />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold text-ink">{a.name}</div>
-                <div className="truncate text-xs text-muted">{fmtDateTime(a.appointment_at)} · {a.type || "Appointment"}</div>
-              </div>
+          {/* The signed-in doctor's own appointments come first; clicking a row opens that patient. */}
+          {[...followups.data].sort((a, b) => Number(b.provider_user === user?.id) - Number(a.provider_user === user?.id)).slice(0, 6).map((a, i) => (
+            <li key={a.appointment_id ?? i}>
+              <button type="button" disabled={!a.patient_id || !can("patients.view")} onClick={() => a.patient_id && openPatient(a.patient_id)}
+                className="flex w-full items-center gap-3 px-5 py-3.5 text-left enabled:hover:bg-subtle">
+                <Avatar name={a.name} size={34} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-semibold text-ink">{a.name}</div>
+                  <div className="truncate text-xs text-muted">{fmtDateTime(a.appointment_at)} · {a.type || "Appointment"}</div>
+                </div>
+                {a.provider_user && a.provider_user === user?.id && <Pill>Yours</Pill>}
+              </button>
             </li>
           ))}
         </ul>
@@ -139,11 +165,12 @@ export default function DashboardPage() {
     <>
       <PageHead
         title="Dashboard"
-        subtitle={`Welcome back${user ? `, ${user.name.split(" ")[0]}` : ""}. ${user ? `Signed in as ${user.roles.join(", ").replaceAll("_", " ").toLowerCase()}.` : ""}`}
+        subtitle={`Welcome back${user ? `, ${firstName(user.name)}` : ""}. ${user ? `Signed in as ${user.roles.map(roleLabel).join(", ")}.` : ""}`}
         actions={
           <div className="flex flex-wrap gap-2">
             {can("patients.register") && <Link href="/reception"><Button variant="primary">Register patient</Button></Link>}
-            {can("pharmacy.write") && <Link href="/pharmacy"><Button variant="primary">Add stock</Button></Link>}
+            {can("pharmacy.write") && <Link href="/dispensing"><Button variant="primary">Dispense</Button></Link>}
+            {can("pharmacy.write") && <Link href="/pharmacy"><Button>Add stock</Button></Link>}
             {can("audit.read") && <Link href="/audit"><Button>Open audit log</Button></Link>}
           </div>
         }
@@ -169,11 +196,23 @@ export default function DashboardPage() {
                   ))}
                 </div>
               </div>
-              {series ? <AreaChart data={series} /> : <Empty>{patients.error ? `Could not load: ${patients.error}` : "Loading…"}</Empty>}
+              {series ? <AreaChart data={series} /> : <Empty>{stats.error ? `Could not load: ${stats.error}` : "Loading…"}</Empty>}
             </section>
           )}
           {apptPanel}
         </div>
+      )}
+
+      {showMoney && (
+        <Card title="Open invoices" aside={<Link href="/billing" className="text-sm font-semibold text-brand hover:underline">View all</Link>}>
+          {money.error ? <Empty>Could not load: {money.error}</Empty> : money.loading ? <Empty>Loading…</Empty> : money.data?.invoices.length ? (
+            <Table head={["Invoice", "Date", "Patient", "Total"]}>
+              {money.data.invoices.slice(0, 5).map(i => (
+                <tr key={i.id}><Td>{i.invoice_number}</Td><Td>{fmtDate(i.account_date)}</Td><Td>{i.name}</Td><Td>{fmtMoney(i.total)}</Td></tr>
+              ))}
+            </Table>
+          ) : <Empty>No open invoices. Everything is paid.</Empty>}
+        </Card>
       )}
 
       {showStock && (
@@ -202,9 +241,9 @@ export default function DashboardPage() {
       {showAudit && (
         <Card title="Recent audit activity" aside={<Link href="/audit" className="text-sm font-semibold text-brand hover:underline">View all</Link>}>
           {audit.error ? <Empty>Could not load: {audit.error}</Empty> : audit.loading ? <Empty>Loading…</Empty> : audit.data?.length ? (
-            <Table head={["Time", "Action", "Table", "Record"]}>
+            <Table head={["Time", "User", "Action", "Details"]}>
               {audit.data.slice(0, 8).map((e, i) => (
-                <tr key={i}><Td>{fmtDateTime(e.event_time)}</Td><Td>{e.action}</Td><Td>{e.table_name}</Td><Td>{e.record_id}</Td></tr>
+                <tr key={e.audit_id ?? i}><Td>{fmtDateTime(e.event_time)}</Td><Td>{e.username || "—"}</Td><Td>{actionLabel(e.action)}</Td><Td><span className="text-xs text-muted">{detailText(e.details)}</span></Td></tr>
               ))}
             </Table>
           ) : <Empty>No audit events yet.</Empty>}

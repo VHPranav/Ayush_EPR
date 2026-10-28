@@ -1,12 +1,17 @@
 "use client";
 import { Eye, EyeOff, ScrollText, ShieldCheck, Stethoscope } from "lucide-react";
 import Image from "next/image";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { DottedGlobe } from "@/components/dotted-globe";
 import { Button, Field, Input } from "@/components/ui";
+import { DEMO, EXPIRED_KEY, checkHealth } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { errMsg } from "@/lib/format";
+
+// Only the static demo build gets the role picker; `DEMO` is a build-time constant, so real builds drop it.
+const DemoRolePicker = DEMO ? dynamic(() => import("@/components/demo-role-picker")) : null;
 
 type Health = "checking" | "online" | "db-down" | "offline";
 
@@ -30,6 +35,7 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [health, setHealth] = useState<Health>("checking");
+  const [expired, setExpired] = useState(false);
 
   // Pre-fill the username remembered on this device (only the username is ever stored, never the password).
   useEffect(() => {
@@ -43,21 +49,36 @@ export default function LoginPage() {
   }, []);
 
   useEffect(() => {
-    const check = async () => {
-      try {
-        const d = await fetch("/api/health").then(r => r.json());
-        setHealth(d.ok ? "online" : "db-down");
-      } catch {
-        setHealth("offline");
-      }
-    };
+    const check = async () => setHealth(await checkHealth());
     check();
     const t = setInterval(check, 10000);
     return () => clearInterval(t);
   }, []);
 
+  // The login page can be kept alive while signed in: clear everything the previous person typed once they are signed out.
   useEffect(() => {
-    if (ready && user) router.replace("/dashboard");
+    if (!ready || user) return;
+    const t = setTimeout(() => { setPassword(""); setShowPw(false); setBusy(false); setError(""); }, 0);
+    return () => clearTimeout(t);
+  }, [ready, user]);
+
+  // Signed out by expiry or deactivation: say so, and bring the user back to the page they were on after signing in.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try { if (sessionStorage.getItem(EXPIRED_KEY)) setExpired(true); } catch {}
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    if (!(ready && user)) return;
+    let back = "/dashboard";
+    try {
+      const p = sessionStorage.getItem(EXPIRED_KEY);
+      sessionStorage.removeItem(EXPIRED_KEY);
+      if (p && p.startsWith("/") && !p.startsWith("//") && p !== "/login" && p !== "/") back = p;
+    } catch {}
+    router.replace(back);
   }, [ready, user, router]);
 
   async function submit(e: FormEvent) {
@@ -90,6 +111,11 @@ export default function LoginPage() {
 
         <div className="flex flex-1 items-center justify-center py-10">
           <form onSubmit={submit} className="w-full max-w-[400px]">
+            {DEMO ? (<>
+              <h1 className="m-0 text-center text-[30px] font-semibold tracking-tight text-ink">Ayush EPR demo</h1>
+              <p className="mb-2 mt-2 text-center text-sm text-muted">No sign-in needed. Pick a role to explore.</p>
+              {DemoRolePicker && <DemoRolePicker />}
+            </>) : (<>
             <h1 className="m-0 text-center text-[30px] font-semibold tracking-tight text-ink">Sign in to Ayush EPR</h1>
             <p className="mb-8 mt-2 text-center text-sm text-muted">Enter your staff username and password to continue.</p>
 
@@ -116,6 +142,9 @@ export default function LoginPage() {
               Remember my username on this device
             </label>
 
+            {expired && !error && (
+              <div role="status" className="mb-4 rounded-xl bg-warn-soft px-4 py-3 text-sm font-medium text-warn">Your session ended. Please sign in again to continue.</div>
+            )}
             {error && (
               <div role="alert" className="mb-4 rounded-xl bg-danger-soft px-4 py-3 text-sm font-medium text-danger">{error}</div>
             )}
@@ -123,8 +152,9 @@ export default function LoginPage() {
             <Button variant="primary" type="submit" className="w-full py-3 text-[15px]" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</Button>
 
             <p className="mt-6 text-center text-sm text-muted">
-              Forgot your password? Ask your administrator to reset it.
+              {DEMO ? "Demo build: use the role cards below, or any username above with the password demo." : "Forgot your password? Ask your administrator to reset it."}
             </p>
+            </>)}
           </form>
         </div>
 

@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { runMigrations } from './migrations.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -41,11 +42,19 @@ export async function getDatabasePool() {
   const defaultDbUrl = process.env.DATABASE_URL || 'postgresql://ayush:ayush_dev_password@127.0.0.1:5432/ayush_epr';
   console.log('Connecting to PostgreSQL database...');
 
-  const isReachable = await testConnection(defaultDbUrl, 2000);
+  let isReachable = await testConnection(defaultDbUrl, 2000);
+  // In production the database container may still be starting: wait for it instead of failing at once.
+  for (let i = 0; process.env.NODE_ENV === 'production' && !isReachable && i < 15; i++) {
+    console.log('Waiting for PostgreSQL...');
+    await new Promise(r => setTimeout(r, 2000));
+    isReachable = await testConnection(defaultDbUrl, 2000);
+  }
+  if (process.env.NODE_ENV === 'production' && !isReachable) throw new Error('Cannot reach PostgreSQL at DATABASE_URL.');
 
   if (isReachable) {
     console.log('✓ Connected to PostgreSQL on', defaultDbUrl.replace(/:[^:@]+@/, ':****@'));
     activePool = new Pool({ connectionString: defaultDbUrl });
+    activePool.on('error', err => console.error('Idle database client error:', err.message));
     
     // Check if schema is initialized
     try {
@@ -55,8 +64,10 @@ export async function getDatabasePool() {
         await runSchema(activePool);
       }
     } catch (err) {
-      console.warn('Notice while checking existing database:', err.message);
+      await activePool.end();
+      throw err;
     }
+    await runMigrations(activePool);
     return activePool;
   }
 
@@ -64,12 +75,13 @@ export async function getDatabasePool() {
   console.log('No active PostgreSQL found on port 5432. Starting native embedded PostgreSQL...');
   
   const { default: EmbeddedPostgres } = await import('embedded-postgres');
-  const pgDir = path.join(__dirname, '..', 'db', '.pgdata');
-  fs.mkdirSync(path.join(__dirname, '..', 'db'), { recursive: true });
+  const pgDir = process.env.PGDATA_DIR || path.join(__dirname, '..', 'db', '.pgdata');
+  fs.mkdirSync(path.dirname(pgDir), { recursive: true });
 
   const port = Number(process.env.PGPORT || 5432);
   const user = process.env.POSTGRES_USER || 'ayush';
   const password = process.env.POSTGRES_PASSWORD || 'ayush_dev_password';
+  if (process.env.NODE_ENV === 'production') throw new Error('Refusing to start the embedded development database in production: set DATABASE_URL to a PostgreSQL server.');
 
   embeddedPostgresInstance = new EmbeddedPostgres({
     port,
@@ -102,35 +114,25 @@ export async function getDatabasePool() {
 
   const connString = `postgresql://${user}:${encodeURIComponent(password)}@127.0.0.1:${port}/ayush_epr`;
   activePool = new Pool({ connectionString: connString });
+  activePool.on('error', err => console.error('Idle database client error:', err.message));
 
   const tableCheck = await activePool.query("SELECT 1 FROM information_schema.tables WHERE table_name = 'users'");
   if (tableCheck.rows.length === 0) {
-    console.log('Deploying initial schema & demo accounts...');
+    console.log('Deploying initial schema...');
     await runSchema(activePool);
   }
 
+  await runMigrations(activePool);
   console.log('✓ Embedded PostgreSQL is ready and active.');
 
-  const shutdown = async () => {
-    if (activePool) {
-      try { await activePool.end(); } catch {}
-    }
-    if (embeddedPostgresInstance) {
-      try {
-        console.log('\nStopping embedded PostgreSQL...');
-        await embeddedPostgresInstance.stop();
-      } catch {}
-    }
-  };
-
-  process.on('SIGINT', async () => {
-    await shutdown();
-    process.exit(0);
-  });
-  process.on('SIGTERM', async () => {
-    await shutdown();
-    process.exit(0);
-  });
-
   return activePool;
+}
+
+/** Close the pool and, when this process started it, the embedded PostgreSQL. */
+export async function closeDatabase() {
+  if (activePool) { try { await activePool.end(); } catch {} }
+  if (embeddedPostgresInstance) {
+    console.log('Stopping embedded PostgreSQL...');
+    try { await embeddedPostgresInstance.stop(); } catch {}
+  }
 }
