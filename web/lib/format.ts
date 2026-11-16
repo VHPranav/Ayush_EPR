@@ -9,6 +9,12 @@ export const fmtDate = (v: string | null | undefined) => {
 export const fmtDateTime = (v: string | null | undefined) => (v ? new Date(v).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short", hour12: false }) : "—");
 export const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong");
 
-/** Currency symbol for invoices; set NEXT_PUBLIC_CURRENCY at build time (default ₹). */
-export const CURRENCY = process.env.NEXT_PUBLIC_CURRENCY || "₹";
-export const money = (v: number | string | null | undefined) => `${CURRENCY}${Number(v ?? 0).toFixed(2)}`;
+/** Currency symbol for invoices; set NEXT_PUBLIC_CURRENCY at build time (default €, the clinic is in Montenegro). */
+export const CURRENCY = process.env.NEXT_PUBLIC_CURRENCY || "€";
+/** Montenegrin style for euro: "1 225.00 €" (space between thousands, symbol after); other currencies keep "₹1225.00". */
+export const money = (v: number | string | null | undefined) => {
+  const n = Number(v ?? 0);
+  if (CURRENCY !== "€") return `${CURRENCY}${n.toFixed(2)}`;
+  const [int, dec] = Math.abs(n).toFixed(2).split(".");
+  return `${n < 0 ? "−" : ""}${int.replace(/\B(?=(\d{3})+(?!\d))/g, " ")}.${dec} €`;
+};

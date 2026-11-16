@@ -102,6 +102,17 @@ export async function download(path: string, fileName: string) {
   URL.revokeObjectURL(url);
 }
 
+/** Fetches an authenticated file for on-screen viewing and returns an object URL (revoke it when done). */
+export async function viewUrl(path: string): Promise<string> {
+  if (DEMO) throw new ApiError("Demo mode: previews are disabled in this read-only preview.", 400);
+  const r = await fetch(path, { headers: authHeaders() });
+  if (!r.ok) {
+    if (r.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    throw new ApiError(r.status === 404 ? "File not found" : "Could not open the file", r.status);
+  }
+  return URL.createObjectURL(await r.blob());
+}
+
 /** Server/database health for the login page. The static demo has no server, so it is always "up". */
 export async function checkHealth(): Promise<"online" | "db-down" | "offline"> {
   if (DEMO) return "online";

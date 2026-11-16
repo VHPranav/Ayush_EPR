@@ -4,7 +4,7 @@ export type Perm =
   | "sessions.write" | "allergies.read" | "allergies.write" | "medrec.read" | "prescriptions.read" | "prescriptions.write"
   | "discharge.write" | "templates.write" | "documents.read" | "documents.write" | "appointments.read" | "appointments.write"
   | "billing.read" | "billing.write" | "contacts.read" | "contacts.write" | "pharmacy.read" | "pharmacy.write"
-  | "treatments.read" | "treatments.write" | "treatments.delete" | "users.manage" | "audit.read";
+  | "treatments.read" | "treatments.write" | "treatments.delete" | "users.manage" | "audit.read" | "intake.write" | "products.read" | "products.write";
 
 export type Role =
   | "SUPER_ADMIN" | "DOCTOR" | "AYURVEDA_PHYSICIAN" | "RECEPTION" | "PHARMACIST" | "NURSE"
@@ -58,7 +58,7 @@ export interface ClinicalRecord {
   created_at: string;
 }
 
-export interface RxMedicine { row_id?: string; form?: string | null; medicine_name: string; dose: string | null; frequency: string | null; instructions: string | null }
+export interface RxMedicine { row_id?: string; form?: string | null; medicine_name: string; dose: string | null; frequency: string | null; instructions: string | null; route?: string | null; timing?: string | null; anupana?: string | null }
 export interface RxTreatment { row_id?: string; treatment_name: string; frequency: string | null; duration: string | null }
 export interface Prescription {
   prescription_id: string;
@@ -66,9 +66,15 @@ export interface Prescription {
   prescribed_at: string;
   status: string;
   notes?: string | null;
+  diagnosis?: string | null;
+  language?: "en" | "me";
+  medication_changes?: string | null;
+  diet?: string | null;
   medicines?: RxMedicine[];
   treatments?: RxTreatment[];
 }
+export interface PrescriptionText { letterhead: string; doctor: string; title: string; oralNote: string; advice: string }
+export type PrescriptionSettings = Record<"en" | "me", PrescriptionText>;
 
 export interface Encounter { encounter_id: string; encounter_type: string; status: string; started_at: string; ended_at: string | null }
 
@@ -96,9 +102,23 @@ export interface Outcome { id: string; domain: string; scale_name: string | null
 export interface Referral { id: string; specialty: string | null; referred_to: string | null; status: string; reason: string | null }
 export interface CarePlan { id: string; plan_type: string; review_date: string | null; status: string }
 export interface TreatmentSession { id: string; session_date: string; start_time: string | null; end_time: string | null; status: string; procedure_notes: string | null; pre_assessment?: string | null; post_assessment?: string | null; tolerance?: string | null; adverse_event?: string | null; response?: string | null; materials?: string | null; practitioner_name?: string | null; treatment_name?: string | null }
-export interface PatientDocument { id: string; document_type: string; file_name: string; uploaded_at: string }
-export interface BillingAccount { id: string; invoice_number: string; total: number | string; status: string; account_date?: string; subtotal?: number | string; discount?: number | string; tax?: number | string }
-export interface BillingItem { id: string; account_id: string; description: string; category: string | null; quantity: number | string; unit_price: number | string; amount: number | string }
+export interface PatientDocument {
+  id: string; document_type: string; file_name: string; uploaded_at: string;
+  mime_type?: string | null; title?: string | null; report_date?: string | null; uploaded_by_name?: string | null;
+}
+export interface InvoiceParty { name: string; address?: string; city?: string; country?: string; pib?: string; pdv?: string }
+export interface InvoiceSeller extends InvoiceParty { phone?: string; email?: string; bankAccount?: string; bankName?: string; swift?: string; place?: string }
+export interface BillingAccount {
+  id: string; invoice_number: string; total: number | string; status: string; account_date?: string; subtotal?: number | string; discount?: number | string; tax?: number | string;
+  notes?: string | null; issued_at?: string | null; due_date?: string | null; period_from?: string | null; period_to?: string | null; place?: string | null;
+  buyer?: InvoiceParty | null; seller?: InvoiceSeller | null; seq_no?: number | null;
+  fiscal_number?: string | null; fiscal_ikof?: string | null; fiscal_jikr?: string | null; created_at?: string;
+}
+export interface BillingItem {
+  id: string; account_id: string; description: string; category: string | null; quantity: number | string; unit_price: number | string; amount: number | string;
+  unit?: string | null; discount_pct?: number | string | null; vat_rate?: number | string | null; vat_amount?: number | string | null;
+}
+export interface InvoiceSettings { seller: InvoiceSeller; place: string; dueDays: number; defaultUnit: string; defaultVat: number | null; note: string; vatRates?: number[] }
 export interface Discharge { id?: string; summary_date?: string; discharge_date?: string; followup_plan: string | null }
 export interface StockItem {
   stock_id: string;
@@ -117,7 +137,7 @@ export interface CatalogItem { name: string; category?: string | null; rate: num
 export interface BillingCatalog { treatments: CatalogItem[]; medicines: CatalogItem[] }
 export interface Billable { since: string | null; medicines: (CatalogItem & { quantity: number | string })[]; sessions: (CatalogItem & { quantity: number | string })[] }
 export interface FollowUp { provider_user?: string | null; provider_name?: string | null; appointment_id?: string; patient_id?: string; appointment_at: string; name: string; uhid: string; type: string | null; reason: string | null }
-export interface InvoiceRow { id: string; invoice_number: string; account_date: string; status: string; total: number | string; payer_type: string | null; patient_id: string; name: string; uhid: string }
+export interface InvoiceRow { id: string; invoice_number: string; account_date: string; status: string; total: number | string; payer_type: string | null; patient_id: string; name: string; uhid: string; fiscal_number?: string | null; buyer_name?: string | null }
 export interface InvoiceSummary { open_count: number; open_total: number | string; invoiced_month: number | string; paid_month: number | string }
 export interface AuditEntry { details?: Record<string, unknown> | null; ip_address?: string | null; audit_id?: number; event_time: string; action: string; table_name: string | null; record_id: string | null; username?: string | null; display_name?: string | null }
 

@@ -31,6 +31,8 @@ export const PERMISSIONS = {
   'templates.write': DOCTORS,
   'documents.read': [...CLINICAL_READERS, 'RECEPTION'],
   'documents.write': [...DOCTORS, 'NURSE', 'RECEPTION'],
+  // hand the tablet to a patient for the intake form (SAGLASNOST); saves answers + signed PDF to their record
+  'intake.write': [...DOCTORS, 'NURSE', 'RECEPTION'],
   // operations
   'appointments.read': ['RECEPTION', 'MANAGER', 'MEDICAL_DIRECTOR', ...CLINICAL_STAFF],
   'appointments.write': ['RECEPTION', ...DOCTORS],
@@ -43,6 +45,9 @@ export const PERMISSIONS = {
   'treatments.read': [...CLINICAL_READERS, 'RECEPTION', 'MANAGER'],
   'treatments.write': DOCTORS,
   'treatments.delete': [],
+  // herbal product catalogue (ingredients, MSDS data) used for the DHL shipping documents
+  'products.read': [...CLINICAL_READERS, 'PHARMACIST', 'MANAGER'],
+  'products.write': [...DOCTORS, 'PHARMACIST'],
   // administration (Super Admin only: it is granted every permission)
   'users.manage': [],
   // governance

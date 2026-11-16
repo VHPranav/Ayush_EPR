@@ -1,9 +1,11 @@
 "use client";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { errMsg, fmtDateTime } from "@/lib/format";
+import { errMsg, fmtDate, fmtDateTime } from "@/lib/format";
+import { INTAKE_FIELDS } from "@/lib/intake-form";
 import { usePatient } from "@/lib/patient";
 import { useToast } from "@/lib/toast";
 import type { ClinicalPayload, ClinicalRecord, Patient } from "@/lib/types";
@@ -59,6 +61,7 @@ function Record() {
   // Re-key so the form re-initialises when another patient is opened or a new assessment is saved.
   return (
     <>
+      <IntakeFormCard />
       <AssessmentForm key={patient!.patient_id + (latest?.record_id ?? "") + (nurseVitals?.record_id ?? "")} latest={latest} nurseVitals={nurseVitals} patient={patient!} />
       <PreviousAssessments />
       <Notes />
@@ -165,6 +168,43 @@ function AssessmentForm({ latest, nurseVitals, patient }: { latest?: ClinicalRec
         </div>
       )}
     </fieldset>
+  );
+}
+
+/** What the patient wrote on the tablet intake form (SAGLASNOST): the newest open, older ones folded. */
+function IntakeFormCard() {
+  const { patient } = usePatient();
+  const forms = patient!.clinicalRecords.filter(r => r.section === "INTAKE_FORM");
+  if (!forms.length) return null;
+  const answers = (r: ClinicalRecord) => {
+    const a = (r.payload ?? {}) as Record<string, string>;
+    return (
+      <dl className="m-0 mt-2 grid grid-cols-1 gap-x-6 gap-y-1.5 text-sm text-ink-2 md:grid-cols-2">
+        {INTAKE_FIELDS.filter(f => a[f.key] && f.key !== "name").map(f => (
+          <div key={f.key}>
+            <dt className="inline font-medium text-ink">{f.en}: </dt>
+            <dd className="inline whitespace-pre-wrap">{f.kind === "yesno" ? (a[f.key] === "YES" ? "Yes" : "No") : f.kind === "date" ? fmtDate(a[f.key]) : a[f.key]}</dd>
+          </div>
+        ))}
+      </dl>
+    );
+  };
+  return (
+    <Card title="Patient intake form" aside={
+      <span className="flex flex-wrap gap-4">
+        <Link href="/documents" className="text-sm font-semibold text-brand underline">Signed PDF in Documents</Link>
+        <Link href="/exam" className="text-sm font-semibold text-brand underline">Start initial exam</Link>
+      </span>
+    }>
+      <div className="text-sm text-muted">Filled in by the patient · {fmtDateTime(forms[0].created_at)}</div>
+      {answers(forms[0])}
+      {forms.slice(1).map(r => (
+        <details key={r.record_id} className="mt-3 border-t border-line pt-2">
+          <summary className="cursor-pointer text-sm"><b>Earlier form</b> · {fmtDateTime(r.created_at)}</summary>
+          {answers(r)}
+        </details>
+      ))}
+    </Card>
   );
 }
 
