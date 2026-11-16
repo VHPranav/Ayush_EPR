@@ -12,6 +12,10 @@ import { patientLinks } from './patient-links.js';
 import { transactional } from './transaction.js';
 import { registerChartSafety, visitForWrite, checkPrescriptionLine } from './chart-safety.js';
 import { validateUpload } from './uploads.js';
+import { registerIntake } from './intake.js';
+import { registerInvoices } from './invoices.js';
+import { registerPrescriptionSettings } from './prescription-settings.js';
+import { registerShipping } from './shipping.js';
 import { dispensePrescription } from './dispensing.js';
 import { hasText, finiteNumber, missing, nonNegative, prescriptionError, requiredText } from './validation.js';
 
@@ -49,7 +53,9 @@ app.use(express.json({ limit: '4mb' }));
 app.use('/api', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const UHID_RE = /^AY-\d{4}-\d{5,}$/;
+// Patient numbers: the clinic's "4063/2026" (see migrations/007_patient_numbers.sql) or the older "AY-2026-00001".
+// In a URL the slash is sent encoded (4063%2F2026).
+const UHID_RE = /^(\d{1,9}\/\d{4}|AY-\d{4}-\d{5,})$/;
 // Every :id in a route is a UUID (a patient may also be looked up by UHID); reject anything else before it reaches SQL.
 app.param('id', (req, res, next, id) => {
   if (UUID_RE.test(id) || (UHID_RE.test(id) && req.method === 'GET' && req.route?.path === '/api/patients/:id')) return next();
@@ -195,6 +201,22 @@ app.post('/api/auth/logout', auth, transactional(pool, async (req, res, c) => {
 
 app.get('/api/me', auth, (req, res) => res.json({ id: req.auth.user_id, username: req.auth.username, name: req.auth.display_name, roles: req.auth.roles, permissions: req.auth.permissions }));
 
+// Re-checks the signed-in user's password, e.g. before a tablet handed to a patient returns to the EPR.
+// Shares the failed-login throttle so it cannot be used to guess passwords.
+app.post('/api/auth/verify-password', auth, async (req, res) => {
+  const { password } = req.body || {};
+  const keys = failKeys(req, req.auth.username);
+  if (throttled(keys)) return res.status(429).json({ error: 'Too many failed attempts. Try again in 15 minutes.' });
+  const r = await pool.query('SELECT password_hash FROM users WHERE user_id=$1', [req.auth.user_id]);
+  if (typeof password !== 'string' || !passwordMatches(password, r.rows[0]?.password_hash)) {
+    recordFailure(keys);
+    await audit(pool, { userId: req.auth.user_id, sessionId: req.auth.session_id, action: 'VERIFY_PASSWORD_FAILURE', tableName: 'users', recordId: req.auth.user_id, req });
+    return res.status(403).json({ error: 'Incorrect password' });
+  }
+  failures.delete(keys[0]);
+  res.json({ ok: true });
+});
+
 app.post('/api/auth/change-password', auth, transactional(pool, async (req, res, c) => {
   const { currentPassword, newPassword } = req.body || {};
   if (typeof currentPassword !== 'string' || typeof newPassword !== 'string' || newPassword.length < 12)
@@ -316,7 +338,30 @@ app.post('/api/users/:id/reset-password', auth, requirePerm('users.manage'), tra
   res.json({ ok: true });
 }));
 
+// ---- Patient numbers (Super Admin sets where the running number continues) ----
+async function patientNumbers(db) {
+  const seq = (await db.query('SELECT last_number FROM patient_number_sequence WHERE id')).rows[0];
+  const used = (await db.query(String.raw`SELECT COALESCE(max(split_part(uhid,'/',1)::bigint),0) AS n FROM patients WHERE uhid ~ '^\d{1,9}/\d{4}$'`)).rows[0];
+  const last = Number(seq?.last_number ?? 0);
+  return { next: last + 1, highestUsed: Number(used.n), year: new Date().getFullYear() };
+}
+app.get('/api/settings/patient-number', auth, requirePerm('patients.view'), async (_req, res) => res.json(await patientNumbers(pool)));
+app.put('/api/settings/patient-number', auth, requirePerm('users.manage'), transactional(pool, async (req, res, c) => {
+  const next = Number(req.body?.next);
+  if (!Number.isInteger(next) || next < 1 || next > 999999999) return res.status(400).json({ error: 'Enter a whole number from 1 upwards' });
+  await c.query('SELECT 1 FROM patient_number_sequence WHERE id FOR UPDATE');
+  const { highestUsed } = await patientNumbers(c);
+  if (next <= highestUsed) return res.status(400).json({ error: `Number ${highestUsed} is already used: the next number must be ${highestUsed + 1} or higher` });
+  await c.query('UPDATE patient_number_sequence SET last_number=$1 WHERE id', [next - 1]);
+  await audit(c, { userId: req.auth.user_id, sessionId: req.auth.session_id, action: 'SET_PATIENT_NUMBER', tableName: 'patient_number_sequence', recordId: String(next), req, details: { next } });
+  res.json(await patientNumbers(c));
+}));
+
 registerChartSafety({ app, pool, auth, audit });
+registerIntake({ app, pool, auth, audit, storageDir: STORAGE_DIR });
+registerInvoices({ app, pool, auth, audit });
+registerPrescriptionSettings({ app, pool, auth, audit });
+registerShipping({ app, pool, auth, audit, storageDir: STORAGE_DIR });
 
 app.post('/api/patients', auth, requirePerm('patients.register'), async (req, res) => {
   const c = await pool.connect();
@@ -527,7 +572,11 @@ app.post('/api/patients/:id/prescriptions', auth, requirePerm('prescriptions.wri
     const invalid = prescriptionError(b);
     if (invalid) { await c.query('ROLLBACK'); return res.status(400).json({ error: invalid }); }
     const encounterId = await visitForWrite(c, req.params.id, b.encounterId);
-    const p = await c.query('INSERT INTO prescriptions(patient_id,prescriber_user,status,notes,encounter_id) VALUES($1,$2,$3,$4,$5) RETURNING *', [req.params.id, req.auth.user_id, b.status || 'ISSUED', b.notes || null, encounterId]);
+    const language = b.language === 'me' ? 'me' : 'en';
+    const short = v => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 4000) : null);
+    const p = await c.query(
+      'INSERT INTO prescriptions(patient_id,prescriber_user,status,notes,encounter_id,diagnosis,language,medication_changes,diet) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *',
+      [req.params.id, req.auth.user_id, b.status || 'ISSUED', b.notes || null, encounterId, short(b.diagnosis), language, short(b.medicationChanges), short(b.diet)]);
     const rx = p.rows[0];
     for (const [i, t] of (b.treatments || []).entries()) {
       await c.query(
@@ -960,38 +1009,7 @@ app.get('/api/patients/:id/billing', auth, requirePerm('billing.read'), async (r
   res.json({ accounts: a.rows, items: items.rows });
 });
 
-app.post('/api/patients/:id/billing', auth, requirePerm('billing.write'), async (req, res) => {
-  const b = req.body || {}, c = await pool.connect();
-  try {
-    await c.query('BEGIN');
-    const inv = 'INV-' + Date.now() + '-' + crypto.randomBytes(2).toString('hex').toUpperCase();
-    const items = Array.isArray(b.items) ? b.items : [];
-    if (!items.length || items.some(i => !hasText(i?.description) || !finiteNumber(i.quantity) || Number(i.quantity) <= 0 || !finiteNumber(i.unitPrice) || Number(i.unitPrice) < 0))
-      { await c.query('ROLLBACK'); return res.status(400).json({ error: 'Each invoice line needs a description and a positive quantity and non-negative price' }); }
-    if (!nonNeg(b.discount) || !nonNeg(b.tax)) { await c.query('ROLLBACK'); return res.status(400).json({ error: 'Discount and tax cannot be negative' }); }
-    const total = items.reduce((x, i) => x + Number(i.quantity) * Number(i.unitPrice || 0), 0);
-    if (Number(b.discount || 0) > total + Number(b.tax || 0)) { await c.query('ROLLBACK'); return res.status(400).json({ error: 'Discount cannot exceed the invoice amount' }); }
-    const a = await c.query(
-      `INSERT INTO billing_accounts(patient_id,payer_type,invoice_number,status,subtotal,discount,tax,total,notes,created_by) VALUES($1,$2,$3,'OPEN',$4,$5,$6,$7,$8,$9) RETURNING *`,
-      [req.params.id, b.payerType || 'SELF-PAY', inv, total, Number(b.discount || 0), Number(b.tax || 0), total - Number(b.discount || 0) + Number(b.tax || 0), b.notes || null, req.auth.user_id]
-    );
-    for (const i of items) {
-      await c.query(
-        `INSERT INTO billing_items(account_id,description,category,quantity,unit_price,amount) VALUES($1,$2,$3,$4,$5,$6)`,
-        [a.rows[0].id, i.description, i.category || null, Number(i.quantity), Number(i.unitPrice || 0), Number(i.quantity) * Number(i.unitPrice || 0)]
-      );
-    }
-    await audit(c, { userId: req.auth.user_id, sessionId: req.auth.session_id, action: 'CREATE_INVOICE', tableName: 'billing_accounts', recordId: a.rows[0].id, req, details: { invoice: inv, total: a.rows[0].total } });
-    await c.query('COMMIT');
-    res.status(201).json(a.rows[0]);
-  } catch (e) {
-    await c.query('ROLLBACK');
-    console.error('Invoice failed:', e.message);
-    res.status(e.code === '23503' ? 404 : 400).json({ error: e.code === '23503' ? 'Patient not found' : 'Invoice could not be saved' });
-  } finally {
-    c.release();
-  }
-});
+// POST /api/patients/:id/billing (create invoice), invoice settings and fiscal references: see invoices.js.
 
 // All invoices across patients (with totals) for Finance and Management; ?status=OPEN|PAID|VOID, ?q= invoice no., patient name or UHID.
 app.get('/api/billing/invoices', auth, requirePerm('billing.read'), async (req, res) => {
@@ -999,9 +1017,9 @@ app.get('/api/billing/invoices', auth, requirePerm('billing.read'), async (req, 
   const q = String(req.query.q || '').trim().slice(0, 100);
   const [list, sum] = await Promise.all([
     pool.query(
-      `SELECT ba.id, ba.invoice_number, ba.account_date, ba.status, ba.total, ba.payer_type, p.patient_id, p.name, p.uhid
+      `SELECT ba.id, ba.invoice_number, ba.account_date, ba.status, ba.total, ba.payer_type, ba.fiscal_number, ba.buyer->>'name' AS buyer_name, p.patient_id, p.name, p.uhid
        FROM billing_accounts ba JOIN patients p ON p.patient_id=ba.patient_id
-       WHERE ($1='' OR ba.status=$1) AND ($2='' OR ba.invoice_number ILIKE $3 OR p.name ILIKE $3 OR p.uhid ILIKE $3)
+       WHERE ($1='' OR ba.status=$1) AND ($2='' OR ba.invoice_number ILIKE $3 OR ba.fiscal_number ILIKE $3 OR ba.buyer->>'name' ILIKE $3 OR p.name ILIKE $3 OR p.uhid ILIKE $3)
        ORDER BY ba.created_at DESC LIMIT 200`, [status, q, `%${q.replace(/[\\%_]/g, '\\$&')}%`]),
     pool.query(
       `SELECT count(*) FILTER (WHERE status='OPEN')::int AS open_count,
@@ -1023,7 +1041,9 @@ app.put('/api/billing/:id', auth, requirePerm('billing.write'), transactional(po
 }));
 
 app.get('/api/patients/:id/documents', auth, requirePerm('documents.read'), async (req, res) => {
-  const { rows } = await pool.query('SELECT id,patient_id,document_type,file_name,mime_type,uploaded_by,uploaded_at FROM documents WHERE patient_id=$1 ORDER BY uploaded_at DESC', [req.params.id]);
+  const { rows } = await pool.query(
+    `SELECT d.id,d.patient_id,d.document_type,d.file_name,d.mime_type,d.uploaded_by,d.uploaded_at,d.title,d.report_date,u.display_name AS uploaded_by_name
+     FROM documents d LEFT JOIN users u ON u.user_id=d.uploaded_by WHERE d.patient_id=$1 ORDER BY COALESCE(d.report_date, d.uploaded_at::date) DESC, d.uploaded_at DESC`, [req.params.id]);
   await audit(req, 'VIEW_PATIENT_MODULE', 'patients', req.params.id, req.params.id, { module: 'documents' });
   res.json(rows);
 });
@@ -1032,11 +1052,14 @@ app.post('/api/patients/:id/documents', auth, requirePerm('documents.write'), up
   if (!req.file) return res.status(400).json({ error: 'File required' });
   req.onRollback = () => fs.promises.unlink(req.file.path).catch(() => {});
   const mimeType = await validateUpload(req.file);
+  const title = typeof req.body.title === 'string' ? req.body.title.trim().slice(0, 200) : '';
+  const reportDate = typeof req.body.reportDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.body.reportDate) ? req.body.reportDate : null;
+  if (req.body.reportDate && !reportDate) return res.status(400).json({ error: 'Report date has the wrong format' });
   let r;
   try {
     r = await c.query(
-      `INSERT INTO documents(patient_id,document_type,file_name,storage_key,mime_type,uploaded_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,patient_id,document_type,file_name,mime_type,uploaded_at`,
-      [req.params.id, req.body.documentType || 'OTHER', req.file.originalname, req.file.filename, mimeType, req.auth.user_id]
+      `INSERT INTO documents(patient_id,document_type,file_name,storage_key,mime_type,uploaded_by,title,report_date) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,patient_id,document_type,file_name,mime_type,uploaded_at,title,report_date`,
+      [req.params.id, req.body.documentType || 'OTHER', req.file.originalname, req.file.filename, mimeType, req.auth.user_id, title || null, reportDate]
     );
   } catch (e) {
     fs.unlink(req.file.path, () => {}); // don't leave an orphan file when the record could not be saved
@@ -1051,8 +1074,10 @@ app.get('/api/documents/:id/download', auth, requirePerm('documents.read'), asyn
   if (!r.rows[0]) return res.status(404).end();
   const f = path.join(STORAGE_DIR, r.rows[0].storage_key);
   if (!fs.existsSync(f)) return res.status(404).end();
-  await audit(req, 'DOWNLOAD_DOCUMENT', 'documents', req.params.id, r.rows[0].patient_id);
-  res.setHeader('Content-Disposition', `attachment; filename="${r.rows[0].file_name.replace(/[^\w. -]/g, '_')}"`);
+  // ?view=1: shown on screen (thumbnail / full-screen preview) rather than saved as a file; audited separately.
+  const view = req.query.view === '1';
+  await audit(req, view ? 'VIEW_DOCUMENT' : 'DOWNLOAD_DOCUMENT', 'documents', req.params.id, r.rows[0].patient_id);
+  res.setHeader('Content-Disposition', `${view ? 'inline' : 'attachment'}; filename="${r.rows[0].file_name.replace(/[^\w. -]/g, '_')}"`);
   res.setHeader('Content-Type', r.rows[0].mime_type || 'application/octet-stream');
   res.sendFile(f);
 });

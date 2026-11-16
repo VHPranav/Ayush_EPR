@@ -16,6 +16,7 @@
     "templates.write",
     "documents.read",
     "documents.write",
+    "intake.write",
     "appointments.read",
     "appointments.write",
     "billing.read",
@@ -27,6 +28,8 @@
     "treatments.read",
     "treatments.write",
     "treatments.delete",
+    "products.read",
+    "products.write",
     "users.manage",
     "audit.read"
   ],
@@ -40,6 +43,7 @@
     "appointments.read",
     "pharmacy.read",
     "treatments.read",
+    "products.read",
     "audit.read"
   ],
   "DOCTOR": [
@@ -59,13 +63,16 @@
     "templates.write",
     "documents.read",
     "documents.write",
+    "intake.write",
     "appointments.read",
     "appointments.write",
     "contacts.read",
     "contacts.write",
     "pharmacy.read",
     "treatments.read",
-    "treatments.write"
+    "treatments.write",
+    "products.read",
+    "products.write"
   ],
   "AYURVEDA_PHYSICIAN": [
     "patients.view",
@@ -84,13 +91,16 @@
     "templates.write",
     "documents.read",
     "documents.write",
+    "intake.write",
     "appointments.read",
     "appointments.write",
     "contacts.read",
     "contacts.write",
     "pharmacy.read",
     "treatments.read",
-    "treatments.write"
+    "treatments.write",
+    "products.read",
+    "products.write"
   ],
   "MODERN_MEDICAL_CONSULTANT": [
     "patients.view",
@@ -109,13 +119,16 @@
     "templates.write",
     "documents.read",
     "documents.write",
+    "intake.write",
     "appointments.read",
     "appointments.write",
     "contacts.read",
     "contacts.write",
     "pharmacy.read",
     "treatments.read",
-    "treatments.write"
+    "treatments.write",
+    "products.read",
+    "products.write"
   ],
   "NURSE": [
     "patients.view",
@@ -130,10 +143,12 @@
     "prescriptions.read",
     "documents.read",
     "documents.write",
+    "intake.write",
     "appointments.read",
     "contacts.read",
     "contacts.write",
-    "treatments.read"
+    "treatments.read",
+    "products.read"
   ],
   "PANCHAKARMA_THERAPIST": [
     "patients.view",
@@ -146,7 +161,8 @@
     "prescriptions.read",
     "documents.read",
     "appointments.read",
-    "treatments.read"
+    "treatments.read",
+    "products.read"
   ],
   "YOGA_THERAPIST": [
     "patients.view",
@@ -159,7 +175,8 @@
     "prescriptions.read",
     "documents.read",
     "appointments.read",
-    "treatments.read"
+    "treatments.read",
+    "products.read"
   ],
   "PHYSIOTHERAPIST": [
     "patients.view",
@@ -172,7 +189,8 @@
     "prescriptions.read",
     "documents.read",
     "appointments.read",
-    "treatments.read"
+    "treatments.read",
+    "products.read"
   ],
   "DIETITIAN": [
     "patients.view",
@@ -184,7 +202,8 @@
     "prescriptions.read",
     "documents.read",
     "appointments.read",
-    "treatments.read"
+    "treatments.read",
+    "products.read"
   ],
   "PHARMACIST": [
     "patients.view",
@@ -192,7 +211,9 @@
     "medrec.read",
     "prescriptions.read",
     "pharmacy.read",
-    "pharmacy.write"
+    "pharmacy.write",
+    "products.read",
+    "products.write"
   ],
   "RECEPTION": [
     "patients.view",
@@ -201,6 +222,7 @@
     "allergies.write",
     "documents.read",
     "documents.write",
+    "intake.write",
     "appointments.read",
     "appointments.write",
     "billing.read",
@@ -221,6 +243,7 @@
     "billing.write",
     "pharmacy.read",
     "treatments.read",
+    "products.read",
     "audit.read"
   ],
   "AUDITOR": [

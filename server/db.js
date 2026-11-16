@@ -68,6 +68,7 @@ export async function getDatabasePool() {
       throw err;
     }
     await runMigrations(activePool);
+    await warnIfNotUtf8(activePool);
     return activePool;
   }
 
@@ -88,7 +89,9 @@ export async function getDatabasePool() {
     databaseDir: pgDir,
     user,
     password,
-    persistent: true
+    persistent: true,
+    // New clusters are UTF-8 (the Windows default WIN1252 cannot store č, ć, đ, š, ž).
+    initdbFlags: ['--encoding=UTF8', '--locale=C'],
   });
 
   const isFirstRun = !fs.existsSync(path.join(pgDir, 'PG_VERSION'));
@@ -108,7 +111,8 @@ export async function getDatabasePool() {
   const dbCheck = await rootClient.query("SELECT 1 FROM pg_database WHERE datname='ayush_epr'");
   if (dbCheck.rows.length === 0) {
     console.log('Creating database ayush_epr...');
-    await rootClient.query('CREATE DATABASE ayush_epr');
+    // Always UTF-8: on Windows the cluster default is WIN1252, which cannot store č, ć, đ, š, ž and other names.
+    await rootClient.query("CREATE DATABASE ayush_epr WITH ENCODING 'UTF8' TEMPLATE template0 LC_COLLATE 'C' LC_CTYPE 'C'");
   }
   await rootClient.end();
 
@@ -123,9 +127,17 @@ export async function getDatabasePool() {
   }
 
   await runMigrations(activePool);
+  await warnIfNotUtf8(activePool);
   console.log('✓ Embedded PostgreSQL is ready and active.');
 
   return activePool;
+}
+
+/** A database in a non-UTF-8 encoding rejects names such as "Šćepanović" with an error, so say so loudly at startup. */
+async function warnIfNotUtf8(pool) {
+  const { rows } = await pool.query("SELECT pg_encoding_to_char(encoding) AS enc FROM pg_database WHERE datname = current_database()");
+  if (rows[0]?.enc !== 'UTF8')
+    console.warn(`! Database encoding is ${rows[0]?.enc}, not UTF8: text with characters such as č, ć, đ, š, ž will be rejected. Back it up and recreate it with ENCODING 'UTF8'.`);
 }
 
 /** Close the pool and, when this process started it, the embedded PostgreSQL. */

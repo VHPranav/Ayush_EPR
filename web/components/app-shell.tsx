@@ -4,8 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useSyncExternalStore, type ReactNode } from "react";
 import {
-  CalendarDays, ChevronsLeft, ChevronsRight, ClipboardList, FileCheck2, FileText, FolderOpen, History, LayoutDashboard, Leaf, ListChecks,
-  LogOut, Package, Pill, Receipt, ShieldCheck, Stethoscope, UserPlus, UsersRound, X, type LucideIcon,
+  CalendarDays, ChevronsLeft, ChevronsRight, ClipboardList, FileCheck2, FileText, FlaskConical, FolderOpen, History, LayoutDashboard, Leaf, ListChecks,
+  LogOut, NotebookPen, Package, Pill, Receipt, ShieldCheck, Stethoscope, Tablet, UserPlus, UsersRound, X, type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { PatientProvider, usePatient } from "@/lib/patient";
@@ -24,6 +24,8 @@ const NAV: { section?: string; items: NavItem[] }[] = [
     section: "Front desk",
     items: [
       { href: "/reception", label: "Patients", icon: UserPlus, perm: "patients.view" },
+      // Opens full screen, without this sidebar, so the tablet can be handed to the patient.
+      { href: "/intake", label: "Intake form (tablet)", icon: Tablet, perm: "intake.write" },
       { href: "/record-management", label: "Record management", icon: FileCheck2, perm: "patients.view" },
       { href: "/appointments", label: "Appointments", icon: CalendarDays, perm: "appointments.read" },
       { href: "/billing", label: "Billing", icon: Receipt, perm: "billing.read" },
@@ -33,6 +35,7 @@ const NAV: { section?: string; items: NavItem[] }[] = [
   {
     section: "Clinical",
     items: [
+      { href: "/exam", label: "Initial exam", icon: NotebookPen, perm: "clinical.read" },
       { href: "/doctor", label: "Doctor", icon: Stethoscope, perm: "clinical.read" },
       { href: "/prescription", label: "Prescription", icon: FileText, perm: "prescriptions.read" },
       { href: "/timeline", label: "Timeline", icon: History, perm: "clinical.read" },
@@ -47,6 +50,7 @@ const NAV: { section?: string; items: NavItem[] }[] = [
       { href: "/dispensing", label: "Dispensing", icon: Pill, perm: "pharmacy.write" },
       { href: "/pharmacy", label: "Pharmacy", icon: Package, perm: "pharmacy.read" },
       { href: "/treatment-master", label: "Treatment Master", icon: ListChecks, perm: "treatments.read" },
+      { href: "/products", label: "Herbal products", icon: FlaskConical, perm: "products.read" },
     ],
   },
   {

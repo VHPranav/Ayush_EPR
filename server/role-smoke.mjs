@@ -33,7 +33,7 @@ for (const role of ALL_ROLES) {
 // --- seed data as proper roles
 const pat = await call(tok.RECEPTION, 'POST', '/api/patients', { name: 'Test Patient', dob: '1980-05-01', sex: 'F', phone: '555-0100' });
 ok(pat.s === 201, 'reception registers patient ' + pat.s); const PID = pat.j.patient_id, UHID = pat.j.uhid;
-ok(/^AY-\d{4}-\d{5}$/.test(UHID), 'uhid format ' + UHID);
+ok(/^\d+\/\d{4}$/.test(UHID), 'patient number format (n/year) ' + UHID);
 const stock = await call(tok.PHARMACIST, 'POST', '/api/pharmacy/stock', { medicineName: 'Ashwagandha', quantity: 10, reorderLevel: 5 }); ok(stock.s === 201, 'stock create');
 const tm = await call(tok.DOCTOR, 'POST', '/api/treatment-master', { name: 'Abhyanga', category: 'Panchakarma' }); ok(tm.s === 201, 'treatment create ' + tm.s);
 const doc = await call(tok.DOCTOR, 'POST', `/api/patients/${PID}/prescriptions`, { treatments: [{ name: 'Abhyanga', frequency: 'Once daily', duration: '7 days' }], medicines: [{ name: 'Ashwagandha', dose: '1 g', frequency: 'Once daily' }] }); ok(doc.s === 201, 'rx create ' + doc.s);
@@ -125,8 +125,8 @@ for (const role of ALL_ROLES.filter(r => permissionsFor([r]).includes('patients.
   ok(p.includes('appointments.read') === (d.appointments.length > 0), `${role} appointments redaction`);
 }
 // reads of prescriptions.read / documents / uhid lookup
-ok((await call(tok.DOCTOR, 'GET', `/api/patients/${UHID}`)).s === 200, 'uhid lookup');
-ok((await call(tok.DOCTOR, 'GET', `/api/patients/${UHID}/timeline`)).s === 404, 'uhid on sub route 404');
+ok((await call(tok.DOCTOR, 'GET', `/api/patients/${encodeURIComponent(UHID)}`)).s === 200, 'uhid lookup');
+ok((await call(tok.DOCTOR, 'GET', `/api/patients/${encodeURIComponent(UHID)}/timeline`)).s === 404, 'uhid on sub route 404');
 // documents upload/download
 const fd = () => { const f = new FormData(); f.append('file', new Blob(['%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF'], { type: 'application/pdf' }), 'report.pdf'); f.append('documentType', 'LAB'); return f; };
 for (const role of ALL_ROLES) {
