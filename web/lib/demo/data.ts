@@ -153,7 +153,7 @@ export function buildDemo(now: number): DemoDb {
 
   CASES.forEach((c, i) => {
     const id = `demo-p${i + 1}`;
-    const uhid = `AY-2026-${String(i + 1).padStart(5, "0")}`;
+    const uhid = `${4001 + i}/2026`;
     const reg = iso(c.daysAgo);
 
     const assessment: ClinicalRecord = {
@@ -224,7 +224,7 @@ export function buildDemo(now: number): DemoDb {
   db.followups = CASES.slice(0, 9).map((c, i) => {
     const d = new Date(now + (i * 1.4 + 0.4) * DAY);
     d.setHours(9 + (i % 6), i % 2 ? 30 : 0, 0, 0);
-    return { appointment_at: d.toISOString(), name: c.name, uhid: `AY-2026-${String(i + 1).padStart(5, "0")}`, type: types[i % 4], reason: i % 4 === 1 ? c.therapy.split(" with ")[0] : "Review progress" };
+    return { appointment_at: d.toISOString(), name: c.name, uhid: `${4001 + i}/2026`, type: types[i % 4], reason: i % 4 === 1 ? c.therapy.split(" with ")[0] : "Review progress" };
   }).sort((a, b) => +new Date(a.appointment_at) - +new Date(b.appointment_at));
 
   // Pharmacy stock (two low, one expiring soon, one already expired); the last number is a sample selling price per unit

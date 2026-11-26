@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, cp, writeFile, appendFile, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, cp, writeFile, appendFile, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -23,7 +23,9 @@ test('API integrity on an isolated PostgreSQL database', { timeout: 120000 }, as
   const dir = await mkdtemp(path.join(tmpdir(), 'ayush-regression-'));
   const dbPort = await freePort(), apiPort = await freePort();
   const database = new EmbeddedPostgres({ databaseDir: path.join(dir, 'pg'), port: dbPort,
-    user: 'regression', password: 'isolated-test-password', persistent: true, onLog() {}, onError() {} });
+    user: 'regression', password: 'isolated-test-password', persistent: true, onLog() {}, onError() {},
+    // UTF-8 like production; the Windows default (WIN1252) rejects names such as "Šćepanović".
+    initdbFlags: ['--encoding=UTF8', '--locale=C'] });
   let child, pool, logs = '';
   try {
     await database.initialise();
@@ -161,14 +163,16 @@ test('API integrity on an isolated PostgreSQL database', { timeout: 120000 }, as
     });
     await t.test('migrations are repeatable, detect modified history, and roll back failed upgrades', async () => {
       await runMigrations(pool);
-      assert.equal((await pool.query('SELECT count(*)::int AS n FROM schema_migrations')).rows[0].n, 3);
+      // One row per migration file shipped in this release.
+      const shipped = (await readdir(new URL('./migrations/', import.meta.url))).filter(n => n.endsWith('.sql')).length;
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM schema_migrations')).rows[0].n, shipped);
       const migrationsDir = path.join(dir, 'migrations');
       await cp(new URL('./migrations/', import.meta.url), migrationsDir, { recursive: true });
       const url = pathToFileURL(migrationsDir + '/');
-      await writeFile(path.join(migrationsDir, '004_failure.sql'), 'CREATE TABLE must_rollback(id integer); SELECT nonexistent_column;');
+      await writeFile(path.join(migrationsDir, '999_failure.sql'), 'CREATE TABLE must_rollback(id integer); SELECT nonexistent_column;');
       await assert.rejects(runMigrations(pool, url), /nonexistent_column/);
       assert.equal((await pool.query("SELECT to_regclass('must_rollback') AS relation")).rows[0].relation, null);
-      assert.equal((await pool.query('SELECT count(*)::int AS n FROM schema_migrations')).rows[0].n, 3);
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM schema_migrations')).rows[0].n, shipped);
       await appendFile(path.join(migrationsDir, '001_appointment_duration.sql'), '\n-- changed applied migration');
       await assert.rejects(runMigrations(pool, url), /Applied migration was modified/);
     });

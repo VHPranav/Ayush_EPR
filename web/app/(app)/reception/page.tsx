@@ -8,6 +8,9 @@ import { errMsg, fmtDate } from "@/lib/format";
 import { usePatient } from "@/lib/patient";
 import { useToast } from "@/lib/toast";
 import type { Patient, PatientSummary } from "@/lib/types";
+import { useFetch } from "@/lib/use-fetch";
+
+interface PatientNumbers { next: number; highestUsed: number; year: number }
 import { AreaField, Button, Card, Empty, Field, Grid, PageHead, Pill, Select, SelectField, Table, TextField, Td } from "@/components/ui";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -65,6 +68,7 @@ export default function ReceptionPage() {
   const [f, setF] = useState(blank);
   const [q, setQ] = useState("");
   const [patients, setPatients] = useState<PatientSummary[] | null>(null);
+  const { data: numbers, reload: reloadNumbers } = useFetch<PatientNumbers>("/api/settings/patient-number");
   const set = (k: keyof typeof blank) => (v: string) => setF(s => ({ ...s, [k]: v }));
 
   const load = useCallback(async () => {
@@ -105,6 +109,7 @@ export default function ReceptionPage() {
           .catch(() => toast("Patient saved, but the allergy note could not be stored"));
       }
       toast("Patient saved: " + p.uhid);
+      reloadNumbers();
       await open(p.patient_id);
       router.push(afterRegister(can));
     } catch (e) {
@@ -131,7 +136,7 @@ export default function ReceptionPage() {
       <PageHead title="Patients" subtitle={can("patients.register") ? "Register a new patient, or search the directory and open an existing record." : "Search the directory and open a patient's record."} actions={can("patients.register") ? <Button variant="primary" onClick={() => { setF(blank); window.scrollTo({ top: 0, behavior: "smooth" }); }}>New patient</Button> : undefined} />
 
       {can("patients.register") && (
-        <Card title="Patient Registration" aside={<Pill>UHID assigned centrally on save</Pill>}>
+        <Card title="Patient Registration" aside={<Pill>{numbers ? `Next patient number: ${numbers.next}/${numbers.year}` : "Patient number assigned on save"}</Pill>}>
 
           {/* Name + DOB on one row */}
           <Grid cols={4}>
@@ -230,6 +235,36 @@ export default function ReceptionPage() {
           </Table>
         ) : <Empty>No patients found.{can("patients.register") ? " Use the form above to register one." : ""}</Empty>}
       </Card>
+
+      {can("users.manage") && numbers && <PatientNumberCard numbers={numbers} onSaved={reloadNumbers} />}
     </>
+  );
+}
+
+/** Super Admin: where the running patient number continues (e.g. after the last number in the paper records). */
+function PatientNumberCard({ numbers, onSaved }: { numbers: PatientNumbers; onSaved: () => void }) {
+  const toast = useToast();
+  const [next, setNext] = useState("");
+  async function save() {
+    try {
+      const r = await api<PatientNumbers>("/api/settings/patient-number", { method: "PUT", body: { next: Number(next) } });
+      toast(`The next patient will be ${r.next}/${r.year}`);
+      setNext("");
+      onSaved();
+    } catch (e) {
+      toast(errMsg(e));
+    }
+  }
+  return (
+    <Card title="Patient numbers">
+      <p className="mt-0 text-sm text-ink-2">
+        Patients are numbered <b>running number / year they started</b>: the next new patient gets <b>{numbers.next}/{numbers.year}</b>.
+        The number keeps counting across years; only the year changes. {numbers.highestUsed ? `Highest number in use: ${numbers.highestUsed}.` : ""}
+      </p>
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="w-48"><TextField label="Continue from number" type="number" min={numbers.highestUsed + 1} value={next} onChange={setNext} placeholder={String(numbers.next)} /></div>
+        <Button variant="primary" onClick={save} disabled={!next} className="mb-2">Set next number</Button>
+      </div>
+    </Card>
   );
 }
