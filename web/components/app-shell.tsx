@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useSyncExternalStore, type ReactNode } from "react";
 import {
   CalendarDays, ChevronsLeft, ChevronsRight, ClipboardList, FileCheck2, FileText, FlaskConical, FolderOpen, History, LayoutDashboard, Leaf, ListChecks,
-  LogOut, NotebookPen, Package, Pill, Receipt, ShieldCheck, Stethoscope, Tablet, UserPlus, UsersRound, X, type LucideIcon,
+  LogOut, MessageSquareText, NotebookPen, Package, Pill, Receipt, ShieldCheck, Stethoscope, Tablet, UserPlus, UsersRound, X, type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { PatientProvider, usePatient } from "@/lib/patient";
@@ -36,6 +36,7 @@ const NAV: { section?: string; items: NavItem[] }[] = [
     section: "Clinical",
     items: [
       { href: "/exam", label: "Initial exam", icon: NotebookPen, perm: "clinical.read" },
+      { href: "/notes", label: "Clinical notes", icon: MessageSquareText, perm: "clinical.read" },
       { href: "/doctor", label: "Doctor", icon: Stethoscope, perm: "clinical.read" },
       { href: "/prescription", label: "Prescription", icon: FileText, perm: "prescriptions.read" },
       { href: "/timeline", label: "Timeline", icon: History, perm: "clinical.read" },

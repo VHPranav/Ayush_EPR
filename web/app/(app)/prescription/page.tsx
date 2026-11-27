@@ -11,6 +11,7 @@ import { useFetch } from "@/lib/use-fetch";
 import type { Prescription as Rx, PrescriptionSettings, RxMedicine as RxLine, StockItem, TreatmentMaster } from "@/lib/types";
 import { printPrescription } from "@/lib/print";
 import { doseValue, FORMS, formOf, medicineSentence, parseDose, TIMINGS, UNITS, type Lang } from "@/lib/prescription-text";
+import { TherapyLabels } from "@/components/therapy-labels";
 import { AreaField, Button, Card, Empty, Field, Input, Modal, PageHead, Pill, RequirePatient, Select, TextField, ViewOnly } from "@/components/ui";
 
 const FREQ = ["Once daily", "Twice daily", "Thrice daily", "As required"];
@@ -55,6 +56,7 @@ function Prescription() {
   const [diet, setDiet] = useState(typeof exam.diet === "string" ? exam.diet : "");
   const [notes, setNotes] = useState("");
   const [shipping, setShipping] = useState<Rx | null>(null);
+  const [labelsRx, setLabelsRx] = useState<Rx | null>(null);
 
   const addTreatment = () => {
     if (!master.length) return toast("Add Treatment Master records first in Treatment Master menu");
@@ -139,7 +141,7 @@ function Prescription() {
               <div key={m.key} className="rounded-xl bg-subtle p-3">
                 <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-[1.3fr_2fr_0.7fr_0.9fr_1.6fr_auto]">
                   <Select aria-label="Form" value={m.form} onChange={e => patchM(m.key, { form: e.target.value })}>
-                    {FORMS.map(x => <option key={x.key} value={x.key}>{x.label.en}</option>)}
+                    {FORMS.map(x => <option key={x.key} value={x.key}>{x.short}</option>)}
                   </Select>
                   <Input placeholder="Formula / name, e.g. 3(1) + 14(1) + 15(3)" aria-label="Formula or name" list="stock-medicines" value={m.name} onChange={e => patchM(m.key, { name: e.target.value })} />
                   <Input placeholder="Dose" aria-label="Dose amount" inputMode="decimal" value={m.amount} onChange={e => patchM(m.key, { amount: e.target.value })} />
@@ -161,7 +163,7 @@ function Prescription() {
         </div>
         <datalist id="stock-medicines">{stockNames.map(n => <option key={n} value={n} />)}</datalist>
         <div className="mt-3 flex flex-wrap gap-2">
-          {FORMS.filter(x => x.key !== "OTHER").map(x => <Button key={x.key} onClick={() => addMedicine(x.key)}>+ {x.label.en.replace(/^Use |^Oral administration of /, "").replace(/^h/, "H")}</Button>)}
+          {FORMS.filter(x => x.key !== "OTHER").map(x => <Button key={x.key} onClick={() => addMedicine(x.key)}>+ {x.short}</Button>)}
           <Button onClick={() => addMedicine("OTHER")}>+ Other</Button>
         </div>
       </Card>
@@ -201,6 +203,7 @@ function Prescription() {
               <Pill tone="sky">{x.language === "me" ? "Crnogorski" : "English"}</Pill>
               {x.diagnosis && <span className="text-sm text-ink-2">{x.diagnosis}</span>}
               <span className="ml-auto flex gap-1.5">
+                {!!x.medicines?.length && <Button onClick={() => setLabelsRx(x)}>Labels</Button>}
                 {can("products.read") && can("documents.write") && !!x.medicines?.length && <Button onClick={() => setShipping(x)}>DHL documents</Button>}
                 <Button variant="primary" onClick={() => print(x)}>Print</Button>
                 <Button onClick={() => print(x, x.language === "me" ? "en" : "me")}>{x.language === "me" ? "Print in English" : "Print in Montenegrin"}</Button>
@@ -223,6 +226,10 @@ function Prescription() {
           </div>
         )) : <Empty>No prescriptions.</Empty>}
       </Card>
+      <Modal open={labelsRx !== null} onClose={() => setLabelsRx(null)} title="Labels for making the therapy" width="max-w-3xl"
+        description="One label per powder / elixir for the label maker: the total at the top and the weight of each part.">
+        {labelsRx && <TherapyLabels key={labelsRx.prescription_id} rx={labelsRx} patientName={patient!.name} onDone={() => setLabelsRx(null)} />}
+      </Modal>
       <Modal open={shipping !== null} onClose={() => setShipping(null)} title="DHL documents" width="max-w-3xl"
         description="Product declaration, an MSDS per product and the product info sheets, as one PDF saved to this patient's Documents.">
         {shipping && <ShippingForm key={shipping.prescription_id} rx={shipping} onDone={() => setShipping(null)} />}

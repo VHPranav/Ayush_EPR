@@ -3,7 +3,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { afterRegister } from "@/lib/permissions";
+import { afterRegister, patientHome } from "@/lib/permissions";
 import { errMsg, fmtDate } from "@/lib/format";
 import { usePatient } from "@/lib/patient";
 import { useToast } from "@/lib/toast";
@@ -117,10 +117,12 @@ export default function ReceptionPage() {
     }
   }
 
-  async function openPatient(id: string) {
+  /** Opens the patient and continues to their chart, or to Appointments to book a visit. */
+  async function openPatient(id: string, to: string) {
     try {
       const p = await open(id);
-      toast("Opened " + p.uhid);
+      toast("Opened " + p.name + " (" + p.uhid + ")");
+      router.push(to);
     } catch (e) {
       toast(errMsg(e));
     }
@@ -137,12 +139,14 @@ export default function ReceptionPage() {
 
       {can("patients.register") && (
         <Card title="Patient Registration" aside={<Pill>{numbers ? `Next patient number: ${numbers.next}/${numbers.year}` : "Patient number assigned on save"}</Pill>}>
+          {/* Its own <form>: the browser's autofill then fills only these fields, never the search boxes. */}
+          <form autoComplete="on" onSubmit={e => { e.preventDefault(); save(); }}>
 
           {/* Name + DOB on one row */}
           <Grid cols={4}>
-            <TextField label="First name *" value={f.first} onChange={set("first")} placeholder="Given name" />
-            <TextField label="Middle name"  value={f.middle} onChange={set("middle")} placeholder="Optional" />
-            <TextField label="Last name *"  value={f.last}  onChange={set("last")}  placeholder="Family / surname" />
+            <TextField label="First name *" name="given-name" autoComplete="given-name" value={f.first} onChange={set("first")} placeholder="Given name" />
+            <TextField label="Middle name" name="additional-name" autoComplete="additional-name" value={f.middle} onChange={set("middle")} placeholder="Optional" />
+            <TextField label="Last name *" name="family-name" autoComplete="family-name" value={f.last}  onChange={set("last")}  placeholder="Family / surname" />
             {/* DOB — compact Day / Month / Year inline */}
             <Field label="Date of birth">
               <div className="grid grid-cols-3 gap-1.5">
@@ -165,10 +169,10 @@ export default function ReceptionPage() {
           <Grid cols={4}>
             <SelectField label="Sex" value={f.sex} onChange={set("sex")} options={["Female", "Male", "Other"]} />
             <Field label="Phone">
-              <input type="tel" value={f.phone} onChange={e => set("phone")(e.target.value)}
-                placeholder="+91 98765 43210" className={telClass} />
+              <input type="tel" name="tel" autoComplete="tel" value={f.phone} onChange={e => set("phone")(e.target.value)}
+                placeholder="Enter your phone number" className={telClass} />
             </Field>
-            <TextField label="Email" type="email" value={f.email} onChange={set("email")} placeholder="patient@email.com" />
+            <TextField label="Email" type="email" name="email" autoComplete="email" value={f.email} onChange={set("email")} placeholder="patient@email.com" />
             <Field label="Blood group">
               <Select value={f.blood} onChange={e => set("blood")(e.target.value)} aria-label="Blood group">
                 {BLOOD_GROUPS.map(g => <option key={g} value={g}>{g === "" ? "— Select —" : g}</option>)}
@@ -193,24 +197,25 @@ export default function ReceptionPage() {
 
           {/* Address / Allergies */}
           <Grid cols={2}>
-            <AreaField label="Address" value={f.address} onChange={set("address")} placeholder="Street, city, state, PIN code" />
-            <AreaField label="Allergies / ADR" value={f.allergies} onChange={set("allergies")} placeholder="Known drug or food allergies…" />
+            <AreaField label="Address" name="street-address" autoComplete="street-address" value={f.address} onChange={set("address")} placeholder="Street, city, state, PIN code" />
+            <AreaField label="Allergies / ADR" name="allergies" autoComplete="off" value={f.allergies} onChange={set("allergies")} placeholder="Known drug or food allergies…" />
           </Grid>
 
           {/* Emergency contact (name + phone) / Physician */}
           <Grid cols={4}>
-            <TextField label="Emergency contact name"  value={f.emergencyName}  onChange={set("emergencyName")}  placeholder="Full name" />
+            <TextField label="Emergency contact name" name="emergency-name" autoComplete="off" value={f.emergencyName}  onChange={set("emergencyName")}  placeholder="Full name" />
             <Field label="Emergency contact phone">
-              <input type="tel" value={f.emergencyPhone} onChange={e => set("emergencyPhone")(e.target.value)}
-                placeholder="+91 98765 43210" className={telClass} />
+              <input type="tel" name="emergency-phone" autoComplete="off" value={f.emergencyPhone} onChange={e => set("emergencyPhone")(e.target.value)}
+                placeholder="Enter emergency contact phone" className={telClass} />
             </Field>
-            <TextField label="Primary physician" value={f.physician} onChange={set("physician")} placeholder="Assigned doctor" />
+            <TextField label="Primary physician" name="physician" autoComplete="off" value={f.physician} onChange={set("physician")} placeholder="Assigned doctor" />
             <div /> {/* spacer */}
           </Grid>
 
           <div className="mt-2">
-            <Button variant="primary" onClick={save}>Save &amp; generate UHID</Button>
+            <Button variant="primary" type="submit">Save &amp; generate UHID</Button>
           </div>
+          </form>
         </Card>
       )}
 
@@ -218,8 +223,8 @@ export default function ReceptionPage() {
       <Card
         title="Patient Directory"
         aside={
-          <input value={q} onChange={e => setQ(e.target.value)}
-            placeholder="Search UHID / name / phone"
+          <input type="search" name="directory-search" autoComplete="off" value={q} onChange={e => setQ(e.target.value)}
+            placeholder="Search UHID / name / phone" aria-label="Search the patient directory"
             className="w-full max-w-[300px] rounded-xl border border-line-strong bg-white px-3.5 py-2.5 text-sm placeholder:text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-ring"
           />
         }
@@ -229,7 +234,12 @@ export default function ReceptionPage() {
             {patients.map(p => (
               <tr key={p.patient_id}>
                 <Td>{p.uhid}</Td><Td>{p.name}</Td><Td>{fmtDate(p.dob)}</Td><Td>{p.sex || "—"}</Td><Td>{p.phone || "—"}</Td>
-                <Td><Button onClick={() => openPatient(p.patient_id)}>Open</Button></Td>
+                <Td>
+                  <span className="flex justify-end gap-1.5">
+                    <Button variant="primary" onClick={() => openPatient(p.patient_id, patientHome(can))}>Open</Button>
+                    {can("appointments.write") && <Button onClick={() => openPatient(p.patient_id, "/appointments")}>Book visit</Button>}
+                  </span>
+                </Td>
               </tr>
             ))}
           </Table>

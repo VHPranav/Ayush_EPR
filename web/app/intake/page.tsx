@@ -7,8 +7,9 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { ArrowLeft, ArrowRight, Check, Lock, Search, UserPlus } from "lucide-react";
 import { api, PATIENT_KEY } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { errMsg, fmtDate } from "@/lib/format";
-import { blankAnswers, INTAKE_STEPS, MONTHS, T, visibleAnswers, type IntakeAnswers, type IntakeField } from "@/lib/intake-form";
+import { patientHome } from "@/lib/permissions";
+import { errMsg, fmtDateEU } from "@/lib/format";
+import { amountValue, blankAnswers, COUNTRY_CODES, INTAKE_STEPS, joinPhone, MONTHS, parseAmount, PERIODS, splitPhone, T, visibleAnswers, type Amount, type IntakeAnswers, type IntakeField } from "@/lib/intake-form";
 import type { Patient, PatientSummary } from "@/lib/types";
 import { Button, Modal } from "@/components/ui";
 import { SignaturePad, type SignaturePadHandle } from "@/components/signature-pad";
@@ -36,7 +37,7 @@ export default function IntakePage() {
   const [target, setTarget] = useState<Target | null>(null);
   const [answers, setAnswers] = useState<IntakeAnswers>(blankAnswers);
   const [result, setResult] = useState<Result | null>(null);
-  const [unlock, setUnlock] = useState<null | "exit" | "done">(null);
+  const [unlock, setUnlock] = useState<null | "exit" | "done" | "back">(null);
 
   useEffect(() => {
     if (ready && !user) router.replace("/login");
@@ -96,25 +97,34 @@ export default function IntakePage() {
           <div className="mb-6 flex h-24 w-24 items-center justify-center rounded-full bg-good-soft text-good"><Check size={52} strokeWidth={2.5} /></div>
           <h1 className="text-4xl font-semibold text-ink"><Bi t={T.thanks} /></h1>
           <p className="mt-4 max-w-xl text-xl text-ink-2"><Bi t={T.thanksHint} /></p>
-          <button type="button" onClick={() => setUnlock("done")} className="mt-16 inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-medium text-muted hover:bg-hover">
-            <Lock size={16} /> Staff
-          </button>
+          {/* Both need the staff password: the tablet may still be in the patient's hands. */}
+          <div className="mt-16 flex flex-wrap items-center justify-center gap-3">
+            <Button onClick={() => setUnlock("back")} className="px-5 py-3"><ArrowLeft size={18} /> Back to the EPR</Button>
+            <Button onClick={() => setUnlock("done")} className="px-5 py-3"><Lock size={16} /> Next form</Button>
+          </div>
         </div>
       )}
 
       <StaffUnlock
         open={unlock !== null}
         username={user.username}
-        purpose={unlock === "exit" ? "Leave the form without saving? The patient's answers will be discarded." : "Unlock the tablet to continue."}
+        purpose={unlock === "exit" ? "Leave the form without saving? The patient's answers will be discarded."
+          : unlock === "back" ? "Unlock the tablet to go back to the EPR with this patient open."
+          : "Unlock the tablet to fill in a form for the next patient."}
         onClose={() => setUnlock(null)}
         onUnlocked={() => {
           const was = unlock;
           setUnlock(null);
           if (was === "exit") restart();
           if (was === "done") setStage("setup");
+          // Back to the EPR with this patient open, on their chart (the intake answers are at the top of the Doctor page).
+          if (was === "back" && result) {
+            try { sessionStorage.setItem(PATIENT_KEY, result.patientId); } catch {}
+            window.location.assign(patientHome(can));
+          }
         }}
       >
-        {unlock === "done" && result && (
+        {unlock !== "exit" && result && (
           <p className="mb-3 rounded-xl bg-good-soft px-3.5 py-2.5 text-sm text-good">
             Saved {result.newPatient ? "and registered " : ""}<b>{result.uhid}</b>: answers on the patient record, <b>{result.fileName}</b> in Documents.
           </p>
@@ -228,7 +238,7 @@ function StaffSetup({ canRegister, onStart, onLeave }: {
             >
               <span className="min-w-0">
                 <span className="block truncate font-semibold text-ink">{p.name}</span>
-                <span className="block text-sm text-muted">{p.uhid} · DOB {fmtDate(p.dob)} · {p.phone || "no phone"}</span>
+                <span className="block text-sm text-muted">{p.uhid} · DOB {fmtDateEU(p.dob)} · {p.phone || "no phone"}</span>
               </span>
               <span className="ml-auto text-sm font-semibold text-brand">{busy === p.patient_id ? "Opening…" : "Start form"}</span>
             </button>
@@ -346,7 +356,7 @@ function PatientForm({ target, answers, setAnswers, onExit, onDone }: {
               <Button onClick={() => pad.current?.clear()} disabled={!signed}>{T.clear[0]} / {T.clear[1]}</Button>
             </div>
             <SignaturePad ref={pad} onChange={setSigned} label="Signature / Potpis" />
-            <div className="mt-3 text-base text-ink-2">{T.date[0]} / {T.date[1]}: <b>{new Date().toLocaleDateString("sr-Latn-ME")}</b></div>
+            <div className="mt-3 text-base text-ink-2">{T.date[0]} / {T.date[1]}: <b>{fmtDateEU(new Date())}</b></div>
           </div>
         </div>
       )}
@@ -404,6 +414,8 @@ function Question({ field: f, value, onChange }: { field: IntakeField; value: st
     );
   }
   if (f.kind === "date") return <fieldset><legend className="w-full">{label}</legend><DateInput value={value} onChange={onChange} /></fieldset>;
+  if (f.kind === "tel") return <fieldset><legend className="w-full">{label}</legend><PhoneInput value={value} onChange={onChange} placeholder={f.placeholder} /></fieldset>;
+  if (f.kind === "amount") return <fieldset><legend className="w-full">{label}</legend><AmountInput field={f} value={value} onChange={onChange} /></fieldset>;
   return (
     <label className="block">
       {label}
@@ -414,13 +426,80 @@ function Question({ field: f, value, onChange }: { field: IntakeField; value: st
           value={value}
           onChange={e => onChange(e.target.value)}
           placeholder={f.placeholder}
-          type={f.kind === "email" ? "email" : f.kind === "tel" ? "tel" : "text"}
-          inputMode={f.kind === "number" ? "decimal" : f.kind === "tel" ? "tel" : f.kind === "email" ? "email" : undefined}
-          autoComplete={f.key === "name" ? "name" : f.kind === "email" ? "email" : f.kind === "tel" ? "tel" : "off"}
+          type={f.kind === "email" ? "email" : "text"}
+          inputMode={f.kind === "number" ? "decimal" : f.kind === "email" ? "email" : undefined}
+          autoComplete={f.key === "name" ? "name" : f.kind === "email" ? "email" : "off"}
           className={big}
         />
       )}
     </label>
+  );
+}
+
+/** Country code (Montenegro by default) + the number. Saved as one value: "+382 69123456". */
+function PhoneInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  const [parts, setParts] = useState(() => splitPhone(value));
+  const update = (k: "code" | "number", v: string) => {
+    const p = { ...parts, [k]: v };
+    setParts(p);
+    onChange(joinPhone(p.code, p.number));
+  };
+  return (
+    <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,2fr)] gap-3">
+      <select aria-label={`${T.countryCode[0]} / ${T.countryCode[1]}`} value={parts.code} onChange={e => update("code", e.target.value)} className={big}>
+        {COUNTRY_CODES.map(c => <option key={c.code + c.en} value={c.code}>{c.code}  {c.en}{c.me !== c.en ? ` / ${c.me}` : ""}</option>)}
+      </select>
+      <input
+        value={parts.number}
+        onChange={e => update("number", e.target.value)}
+        placeholder={placeholder}
+        type="tel"
+        inputMode="tel"
+        autoComplete="tel-national"
+        aria-label={`${T.phoneNumber[0]} / ${T.phoneNumber[1]}`}
+        className={big}
+      />
+    </div>
+  );
+}
+
+/** How much: a number, its unit (cigarettes, glasses …) and per day / week / month, plus "which?" where it applies. */
+function AmountInput({ field: f, value, onChange }: { field: IntakeField; value: string; onChange: (v: string) => void }) {
+  const [a, setA] = useState<Amount>(() => parseAmount(value, f));
+  const update = (patch: Partial<Amount>) => {
+    const next = { ...a, ...patch };
+    setA(next);
+    onChange(amountValue(next));
+  };
+  const chip = (on: boolean) => `h-14 rounded-2xl border-2 px-4 text-base font-semibold transition-colors ${on ? "border-brand bg-brand text-white" : "border-line-strong bg-white text-ink hover:bg-subtle"}`;
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <input
+          value={a.n}
+          onChange={e => update({ n: e.target.value.replace(/[^\d.,]/g, "") })}
+          inputMode="decimal"
+          placeholder="0"
+          aria-label={`${T.amount[0]} / ${T.amount[1]}`}
+          className={`${big} w-28 text-center`}
+        />
+        {(f.units ?? []).map(([en, me]) => (
+          <button key={en} type="button" aria-pressed={a.unit === en} onClick={() => update({ unit: en })} className={chip(a.unit === en)}>
+            {en === me ? en : `${en} / ${me}`}
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        {PERIODS.map(([en, me]) => (
+          <button key={en} type="button" aria-pressed={a.period === en} onClick={() => update({ period: en })} className={chip(a.period === en)}>
+            {T.per[0]} {en} / {me}
+          </button>
+        ))}
+      </div>
+      {f.note && (
+        <input value={a.note} onChange={e => update({ note: e.target.value })} placeholder={`${f.note[0]} / ${f.note[1]}`} aria-label={`${f.note[0]} / ${f.note[1]}`} className={big} />
+      )}
+    </div>
   );
 }
 
@@ -444,7 +523,7 @@ function DateInput({ value, onChange }: { value: string; onChange: (v: string) =
       </select>
       <select aria-label="Month / Mjesec" value={parts.m} onChange={e => update("m", e.target.value)} className={big}>
         <option value="">{T.month[0]} / {T.month[1]}</option>
-        {MONTHS.map(([en, me], i) => <option key={en} value={String(i + 1).padStart(2, "0")}>{en} / {me}</option>)}
+        {MONTHS.map(([en, me], i) => <option key={en} value={String(i + 1).padStart(2, "0")}>{String(i + 1).padStart(2, "0")} · {en} / {me}</option>)}
       </select>
       <select aria-label="Year / Godina" value={parts.y} onChange={e => update("y", e.target.value)} className={big}>
         <option value="">{T.year[0]} / {T.year[1]}</option>
@@ -458,7 +537,7 @@ function Review({ answers, onEdit }: { answers: IntakeAnswers; onEdit: (step: nu
   const show = (f: IntakeField) => {
     const v = answers[f.key];
     if (f.kind === "yesno") return v === "YES" ? `${T.yes[0]} / ${T.yes[1]}` : v === "NO" ? `${T.no[0]} / ${T.no[1]}` : "—";
-    if (f.kind === "date" && v) return fmtDate(v);
+    if (f.kind === "date" && v) return fmtDateEU(v);
     return v.trim() || "—";
   };
   return (
