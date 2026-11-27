@@ -1,11 +1,13 @@
 # Render Blueprint (demo / test hosting). In Render: New -> Blueprint -> pick this repo -> Apply.
-# It creates the database, the API and the web app, and wires them together.
+# It creates the database and one web service that runs both the API and the web app (Dockerfile.render).
+# One service instead of two: on the free plan each service sleeps on its own, and a sleeping API behind an
+# awake web app gave 502 errors. Together they sleep and wake as one.
 #
 # Free plan limits (fine for showing the app, NOT for real patient data):
-#  - services sleep after 15 minutes without visits; the first visit after that takes ~1 minute
+#  - the service sleeps after 15 minutes without visits; the first visit after that takes ~1 minute
 #  - the free database expires after 30 days
-#  - no disk: uploaded documents are lost when the API restarts or redeploys
-# For real use change every `plan: free` to a paid plan and add a disk to the API (mount /app/storage).
+#  - no disk: uploaded documents are lost when the service restarts or redeploys
+# For real use change every `plan: free` to a paid plan and add a disk mounted at /app/api/storage.
 
 databases:
   - name: ayush-epr-db
@@ -16,16 +18,21 @@ databases:
     postgresMajorVersion: "16"
 
 services:
+  # Named ayush-epr-api because that service already holds PASSWORD_SALT and ADMIN_PASSWORD; keeping the name
+  # keeps those values (and every password). It now serves the whole app at its address.
   - type: web
     name: ayush-epr-api
     runtime: docker
     plan: free
     region: frankfurt
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./Dockerfile.render
     dockerContext: .
-    healthCheckPath: /healthz
+    # Through the web app to the API and the database, so it checks all three.
+    healthCheckPath: /api/health
     envVars:
       - key: PORT
+        value: "10000"
+      - key: API_PORT
         value: "4000"
       - key: NODE_ENV
         value: production
@@ -48,17 +55,3 @@ services:
       # Asked for when the Blueprint is applied (12+ characters). Delete it after the first sign-in.
       - key: ADMIN_PASSWORD
         sync: false
-
-  - type: web
-    name: ayush-epr-web
-    runtime: docker
-    plan: free
-    region: frankfurt
-    dockerfilePath: ./web/Dockerfile
-    dockerContext: ./web
-    envVars:
-      # Baked in at build time (Render passes it as the Docker build arg). Free services can't receive
-      # private-network traffic, so this is the API's public address. If Render gave the API another
-      # address (name already taken), change it here or in the dashboard and redeploy the web service.
-      - key: API_URL
-        value: https://ayush-epr-api.onrender.com
