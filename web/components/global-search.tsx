@@ -72,6 +72,9 @@ export function GlobalSearch() {
       <Search size={18} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" aria-hidden />
       <input
         ref={inputRef}
+        type="search"
+        name="global-patient-search"
+        autoComplete="off"
         value={q}
         onChange={e => { setQ(e.target.value); setIdx(0); }}
         onFocus={() => setFocused(true)}

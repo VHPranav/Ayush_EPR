@@ -15,9 +15,8 @@ export function patientHome(can: Can): string {
   return "/dashboard";
 }
 
-/** After registering a patient: clinicians continue to the chart; front desk goes on to book an appointment. */
+/** After registering a patient: book their first visit (Appointments); without booking rights, their chart. */
 export function afterRegister(can: Can): string {
-  if (can("clinical.read")) return "/doctor";
   if (can("appointments.write")) return "/appointments";
   return patientHome(can);
 }

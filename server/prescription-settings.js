@@ -6,22 +6,22 @@ import { transactional } from './transaction.js';
 
 export const DEFAULT_PRESCRIPTION_SETTINGS = {
   en: {
-    letterhead: 'DATHATHREYA AYURVEDA & YOGA CENTER\nDATHA AYURYOGA INTERNATIONAL HEALTH INSTITUTE D.O.O\n109, Nikšićki ulica, Gornja Gorica, Podgorica 81000, Montenegro\nMobile: +382 (0)6933 0057; Email: dathahealthinstitute@gmail.com',
+    letterhead: 'DATHATHREYA AYURVEDA & YOGA CENTER\nDATHA AYURYOGA INTERNATIONAL HEALTH INSTITUTE D.O.O\n109, Nikšićki ulica, Gornja Gorica, Podgorica 81000, Montenegro\nMobile: +382 (0)6933 0057; Email: dathahealthinstitute@gmail.com; Web: www.dathathreya.com',
     doctor: 'Vaidyaratnam\nDr. RAGHAVAN RAMANKUTTY\nMBBS, Pg. Dip. (Diabetology), Dip. (Acupuncture), BSc Chemistry, MA, LLB\nDISCIPLE OF SWAMI DATHATHREYA\nMODERN MEDICINE LICENCE # 11367',
-    title: 'PRESCRIPTION',
+    title: 'CG PRESCRIPTION - DETAILED ENGLISH',
     oralNote: 'Breathe deeply for 5 minutes before and 5 minutes after taking this therapy. Do not eat or drink for half an hour before and after each dose.',
     advice: [
-      'Proper hydration and oxygenation are very important for early recovery. Take slow and deep breath consciously for 5 minutes before and after each dose. Drink at least 2-3 liters of water daily, sip by sip.',
-      'Inform us immediately in case of fever, infection, vomiting etc.',
+      'Proper hydration and breathing are very important for early recovery: Drink water throughout the day, sip by sip. Drink at least 2 litres of warm water (or an amount equivalent to 5% of your body weight), half an hour after each dose.',
+      'Inform us immediately in the event of a high fever, infection or vomiting.',
       'Allow a 30-minute interval between meals, drinking water and taking oral doses.',
       'Keep a detailed daily record of changes in your health status.',
-      'To update weekly about your health via email drraghavan@dathathreya.com, phone or WhatsApp +382 6933 0057',
+      'For weekly health updates, contact us by email at dathahealthinstitute@gmail.com, by phone, or via Viber/WhatsApp at +382 69 33 00 57.',
     ].join('\n'),
   },
   me: {
     letterhead: 'DATATREJA AJURVEDA TRETMANI I JOGA CENTAR\nDATA AJURJOGA MEĐUNARODNA ZDRAVSTVENA INSTITUCIJA D.O.O.\n109, Nikšićki ulica, Gornja Gorica, Podgorica 81000, Montenegro\nMob: +382 (0)6933 0057; Email: dathahealthinstitute@gmail.com; Web: www.dathathreya.com',
     doctor: 'Vaidyaratnam (Ajurveda) i Doktor (moderna medicina)\nRAGHAVAN RAMANKUTY\nMBBS, Pg Dip. (Diabetology), Dip.(Acupuncture), BSc (Chemistry), MA, LLB\nUČENIK SVAMIJA DATATREJA\nModern Medicine License # 11367 (India)',
-    title: 'RECEPT',
+    title: 'CG PRESCRIPTION - DETAILED',
     oralNote: 'Duboko dišite 5 min prije i 5 min nakon uzimanja ove terapije. Ne jesti i ne piti pola sata prije i poslije svake doze.',
     advice: [
       'Pravilna hidratacija i disanje je vrlo važno za rani oporavak: Pijte vodu dnevno, gutljaj po gutljaj. Popijte makar 2 litra tople vode (ili 5% vaše tjelesne težine).',

@@ -1,0 +1,57 @@
+# Render Blueprint (demo / test hosting). In Render: New -> Blueprint -> pick this repo -> Apply.
+# It creates the database and one web service that runs both the API and the web app (Dockerfile.render).
+# One service instead of two: on the free plan each service sleeps on its own, and a sleeping API behind an
+# awake web app gave 502 errors. Together they sleep and wake as one.
+#
+# Free plan limits (fine for showing the app, NOT for real patient data):
+#  - the service sleeps after 15 minutes without visits; the first visit after that takes ~1 minute
+#  - the free database expires after 30 days
+#  - no disk: uploaded documents are lost when the service restarts or redeploys
+# For real use change every `plan: free` to a paid plan and add a disk mounted at /app/api/storage.
+
+databases:
+  - name: ayush-epr-db
+    plan: free
+    region: frankfurt
+    databaseName: ayush_epr
+    user: ayush
+    postgresMajorVersion: "16"
+
+services:
+  # Named ayush-epr-api because that service already holds PASSWORD_SALT and ADMIN_PASSWORD; keeping the name
+  # keeps those values (and every password). It now serves the whole app at its address.
+  - type: web
+    name: ayush-epr-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile.render
+    dockerContext: .
+    # Through the web app to the API and the database, so it checks all three.
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: API_PORT
+        value: "4000"
+      - key: NODE_ENV
+        value: production
+      # Render's proxy plus the Next.js proxy in front of the API.
+      - key: TRUST_PROXY
+        value: "2"
+      - key: SESSION_HOURS
+        value: "8"
+      - key: MAX_UPLOAD_MB
+        value: "20"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ayush-epr-db
+          property: connectionString
+      # Random once, then kept. Losing it makes every password unusable, so never regenerate it.
+      - key: PASSWORD_SALT
+        generateValue: true
+      - key: ADMIN_USERNAME
+        value: admin
+      # Asked for when the Blueprint is applied (12+ characters). Delete it after the first sign-in.
+      - key: ADMIN_PASSWORD
+        sync: false

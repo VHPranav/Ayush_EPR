@@ -14,7 +14,6 @@ import { AreaField, Button, Card, Empty, Grid, PageHead, Pill, RequirePatient, S
 const PRAKRITI = ["Vata", "Pitta", "Kapha", "Vata-Pitta", "Pitta-Kapha", "Vata-Kapha", "Tridoshic"];
 const AGNI = ["Sama", "Manda", "Tikshna", "Vishama"];
 const AMA = ["Present", "Absent", "Uncertain"];
-const NOTE_TYPES = ["Consultation", "Progress / SOAP", "Ayurveda", "Panchakarma", "Yoga", "Dietitian", "Administrative"];
 const VITALS = [["bp", "BP"], ["pulse", "Pulse"], ["temp", "Temperature"], ["spo2", "SpO₂"], ["height", "Height"], ["weight", "Weight"], ["bmi", "BMI"], ["rr", "Respiratory rate"]] as const;
 
 type Form = ReturnType<typeof fromRecord>;
@@ -123,7 +122,7 @@ function AssessmentForm({ latest, nurseVitals, patient }: { latest?: ClinicalRec
       <Card title="Modern Clinical Assessment">
         <Grid cols={3}>
           <AreaField label="Chief complaints" value={f.cc} onChange={set("cc")} />
-          <AreaField label="HPI" value={f.hpi} onChange={set("hpi")} />
+          <AreaField label="History of Present Illness (HPI)" value={f.hpi} onChange={set("hpi")} />
           <AreaField label="Past medical/surgical history" value={f.past} onChange={set("past")} />
         </Grid>
         <Grid cols={4}>
@@ -219,7 +218,7 @@ function PreviousAssessments() {
         <details key={r.record_id} className="border-b border-line py-2 last:border-0">
           <summary className="cursor-pointer text-sm"><b>{fmtDateTime(r.created_at)}</b>{r.author_name ? ` · ${r.author_name}` : ""}{r.payload?.modernDiagnosis ? ` — ${r.payload.modernDiagnosis}` : ""}</summary>
           <dl className="m-0 mt-2 grid grid-cols-1 gap-x-6 gap-y-1 text-sm text-ink-2 md:grid-cols-2">
-            {([["Chief complaints", r.payload?.chiefComplaints], ["HPI", r.payload?.hpi], ["Modern diagnosis", r.payload?.modernDiagnosis], ["Prakriti", r.payload?.prakriti], ["Agni", r.payload?.agni], ["Ama", r.payload?.ama], ["Ayurvedic diagnosis", r.payload?.ayurvedaDiagnosis], ["Integrated impression", r.payload?.integratedImpression], ["Goals / safety", r.payload?.goalsSafety]] as const)
+            {([["Chief complaints", r.payload?.chiefComplaints], ["History of Present Illness (HPI)", r.payload?.hpi], ["Modern diagnosis", r.payload?.modernDiagnosis], ["Prakriti", r.payload?.prakriti], ["Agni", r.payload?.agni], ["Ama", r.payload?.ama], ["Ayurvedic diagnosis", r.payload?.ayurvedaDiagnosis], ["Integrated impression", r.payload?.integratedImpression], ["Goals / safety", r.payload?.goalsSafety]] as const)
               .filter(([, v]) => v).map(([k, v]) => <div key={k}><dt className="inline font-medium text-ink">{k}: </dt><dd className="inline">{v}</dd></div>)}
           </dl>
         </details>
@@ -228,41 +227,20 @@ function PreviousAssessments() {
   );
 }
 
+/** The latest clinical notes; they are written on the Clinical notes page (consultations, follow-ups, updates). */
 function Notes() {
-  const { patient, refresh } = usePatient();
-  const { can } = useAuth();
-  const toast = useToast();
-  const [type, setType] = useState(NOTE_TYPES[0]);
-  const [text, setText] = useState("");
-  const notes = patient!.clinicalRecords.filter(r => r.section === "NOTE");
-
-  async function save() {
-    try {
-      await api(`/api/patients/${patient!.patient_id}/clinical-records`, { body: { encounterId: patient!.encounters?.find(e => e.status === "OPEN")?.encounter_id, section: "NOTE", payload: { type, text } } });
-      setText("");
-      await refresh();
-      toast("Note saved centrally");
-    } catch (e) {
-      toast(errMsg(e));
-    }
-  }
-
+  const { patient } = usePatient();
+  const all = patient!.clinicalRecords.filter(r => r.section === "NOTE");
+  const replaced = new Set(all.map(r => r.amended_from).filter(Boolean));
+  const notes = all.filter(r => !replaced.has(r.record_id)).slice(0, 3);
   return (
-    <Card title="Notes">
-      {can("clinical.write") && (
-        <>
-          <Grid cols={2}>
-            <SelectField label="Type" value={type} onChange={setType} options={NOTE_TYPES} />
-            <AreaField label="Note" value={text} onChange={setText} />
-          </Grid>
-          <p className="text-sm text-muted">Saving attests to this note under your signed-in identity. Amendments preserve the original.</p><Button variant="primary" onClick={save}>Sign and save note</Button>
-        </>
-      )}
+    <Card title="Latest clinical notes" aside={<Link href="/notes"><Button>Open clinical notes</Button></Link>}>
       {notes.length ? notes.map(n => (
-        <div key={n.record_id} className="border-b border-line p-2">
-          <b>{n.payload?.type || "Note"}</b> • {fmtDateTime(n.created_at)}{n.author_name ? ` • ${n.author_name}` : ""}<br />{n.payload?.text || ""}
+        <div key={n.record_id} className="border-b border-line py-2 last:border-0">
+          <b>{n.payload?.type || "Note"}</b> • {fmtDateTime(n.created_at)}{n.author_name ? ` • ${n.author_name}` : ""}
+          <p className="m-0 line-clamp-3 whitespace-pre-wrap text-sm text-ink-2">{n.payload?.text || ""}</p>
         </div>
-      )) : <Empty>No notes.</Empty>}
+      )) : <Empty>No notes yet. Write consultations and follow-ups under Clinical notes.</Empty>}
     </Card>
   );
 }

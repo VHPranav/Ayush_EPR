@@ -1,13 +1,19 @@
 import type { BillingAccount, BillingItem, InvoiceParty, InvoiceSeller, Patient, Prescription, PrescriptionSettings } from "./types";
-import { LABELS, prescriptionItems, type Lang } from "./prescription-text";
+import { LABELS, prescriptionItems, segHtml, type Lang } from "./prescription-text";
 
 /** Text for a CSS string literal (page footer), so a name cannot break out of the quotes. */
 const cssStr = (v: string) => v.replace(/[\\"\n<>]/g, c => (c === "\n" ? " " : `\\${c.charCodeAt(0).toString(16)} `));
 const esc = (v: unknown) => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
+/** Letterhead line: "Mob:" / "Email:" / "Web:" in italics, email addresses and web addresses as blue underlined links. */
+const contactHtml = (line: string) => esc(line)
+  .replace(/\b(Mob(?:ile)?|Tel|Email|E-mail|Web)\s*:/g, "<i>$1</i>:")
+  .replace(/([\w.+-]+@[\w-]+\.[\w.]+|www\.[\w.-]+\.[a-z]{2,})/g, '<span class="lnk">$1</span>');
+
 /**
- * Opens the prescription in the clinic's format (letterhead, doctor, Name / Registration # / Diagnosis / Date,
- * numbered advice) in English or Montenegrin, and starts the print dialog. Internal notes are not printed.
+ * Opens the prescription in the clinic's "CG PRESCRIPTION - DETAILED" layout (title, letterhead, doctor, a box with
+ * PAT IME / REGN NO / DATE and the numbered advice, highlighted dose and formula) in English or Montenegrin,
+ * and starts the print dialog. Internal notes and the diagnosis are not printed.
  */
 export function printPrescription(patient: Patient, rx: Prescription, settings: PrescriptionSettings, lang: Lang = rx.language ?? "en") {
   const w = window.open("", "_blank", "width=900,height=1000");
@@ -17,38 +23,49 @@ export function printPrescription(patient: Patient, rx: Prescription, settings: 
   const head = lines(t.letterhead), doc = lines(t.doctor);
   const items = prescriptionItems(rx, lang, t.oralNote, t.advice);
   const date = dmy(rx.prescribed_at);
-  const logo = `${window.location.origin}/letterhead-logo.png`;
-  const body = items.map(it => `<li>${it.heading ? `<b>${esc(it.heading)}${/[:.]$/.test(it.heading) ? "" : ":"}</b><br>` : ""}<span>${esc(it.text)}</span></li>`).join("");
-  w.document.write(`<!doctype html><html lang="${lang === "me" ? "sr-Latn-ME" : "en"}"><head><meta charset="utf-8"><title>${esc(patient.uhid)}-${esc(patient.name)}</title>
+  // "4062-Katarina Vukadinovic Page 1": the running number without the year.
+  const footer = `${patient.uhid.split("/")[0]}-${patient.name} ${L.page} `;
+  const who = [patient.name, patient.dob ? `( ${dmy(patient.dob)}.)` : "", (patient.address ?? "").replace(/\s*\n\s*/g, ", "), patient.phone ?? ""].filter(Boolean).join(" ");
+  const body = items.map(it => {
+    const text = segHtml(it.segs);
+    if (!it.heading) return `<li${it.tight ? ' class="t"' : ""}>${text}</li>`;
+    const h = `<b>${esc(it.heading)}${/[:.]$/.test(it.heading) ? "" : ":"}</b>`;
+    return it.block ? `<li>${h}<div class="ind">${text}</div></li>` : `<li>${h} ${text}</li>`;
+  }).join("");
+  w.document.write(`<!doctype html><html lang="${lang === "me" ? "sr-Latn-ME" : "en"}"><head><meta charset="utf-8"><title>${esc(footer.trim())}</title>
 <style>
-@page{size:A4;margin:12mm 14mm 16mm;@bottom-center{content:"${cssStr(`${patient.uhid}-${patient.name} · ${L.page} `)}" counter(page);font:10px "Times New Roman",serif}}
-body{font:12.5px/1.55 Calibri,Carlito,"Segoe UI",Arial,sans-serif;color:#111;margin:0}
-.frame{border:1px solid #444}
-.lh{display:flex;align-items:center;gap:18px;padding:12px 16px;border-bottom:1px solid #444}
-.lh img{width:92px;height:auto}
-.lh .t1{font-size:19px;font-weight:700}
-.doc{text-align:center;padding:8px;border-bottom:1px solid #444;line-height:1.35}
-.doc div:nth-child(1){font-style:italic}
-.doc div:nth-child(2){font-size:17px;font-weight:700}
-.doc div:nth-child(3),.doc div:nth-child(4){font-weight:700;font-size:12px}
-.doc div:nth-child(5){font-size:11.5px}
-.title{text-align:center;font-size:24px;font-weight:700;padding:4px;border-bottom:1px solid #444;letter-spacing:.5px}
-table.hdr{width:100%;border-collapse:collapse}
-.hdr td{border-bottom:1px solid #444;border-right:1px solid #444;padding:4px 10px}
-.hdr td:last-child{border-right:0;text-align:center}
-.adv{padding:6px 16px 18px}
-.adv h2{font-size:13px;margin:6px 0}
-ol{margin:0;padding-left:20px}
-li{margin:0 0 9px}
+@page{size:A4;margin:14mm 12mm 16mm;@bottom-center{content:"${cssStr(footer)}" counter(page);font:11px "Times New Roman",serif}}
+*{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{font:12px/1.45 Calibri,Carlito,"Segoe UI",Arial,sans-serif;color:#000;margin:0}
+.top{font-size:21px;white-space:pre;margin:0 0 10px 52px;letter-spacing:.2px}
+.lh{text-align:center;line-height:1.3;margin-bottom:4px}
+.lh .t1{font-size:16px;font-weight:700}
+.lnk{color:#0563c1;text-decoration:underline}
+.doc div:nth-child(2){font-weight:700}
+.doc div:nth-child(3){font-weight:700;font-size:11px}
+.doc div:nth-child(4){font-weight:700}
+.doc div:nth-child(5){font-size:11px}
+.frame{border:1px solid #808080;min-height:128mm}
+.pat{padding:2px 6px 3px;border-bottom:1px solid #808080;line-height:1.6}
+.adv{padding:4px 8px 12px}
+.adv h2{font-size:12px;margin:0 0 1px 10px}
+ol{margin:0;padding-left:16px}
+li{margin:0 0 12px;padding-left:2px}
+li.t{margin-bottom:1px}
+.ind{padding-left:22px}
+.hl,.hlu{background:#ff0;font-weight:700}
+.hlu,.bu{text-decoration:underline}
+.bu,.b{font-weight:700}
+.red{color:#c00000;font-weight:700;white-space:nowrap}
 </style></head><body>
-<div class="frame">
-  <div class="lh"><img src="${esc(logo)}" alt=""><div>${head.map((l, i) => `<div class="${i === 0 ? "t1" : ""}">${esc(l)}</div>`).join("")}</div></div>
+<div class="top">${esc(t.title)}</div>
+<div class="lh">
+  ${head.map((l, i) => `<div class="${i === 0 ? "t1" : ""}">${contactHtml(l)}</div>`).join("")}
+  <div class="sep">----------------------</div>
   <div class="doc">${doc.map(l => `<div>${esc(l)}</div>`).join("")}</div>
-  <div class="title">${esc(t.title)}</div>
-  <table class="hdr">
-    <tr><td style="width:18%">${esc(L.name)}</td><td>${esc(patient.name)}</td><td style="width:20%">${esc(L.reg)}</td><td style="width:16%">${esc(patient.uhid)}</td></tr>
-    <tr><td>${esc(L.diagnosis)}</td><td>${esc(rx.diagnosis || "")}</td><td>${esc(L.date)}</td><td>${esc(date)}.</td></tr>
-  </table>
+</div>
+<div class="frame">
+  <div class="pat"><div>${esc(L.name)}: ${esc(who)}</div><div>${esc(L.reg)}: ${esc(patient.uhid)}</div><div>${esc(L.date)}: ${esc(date)}.</div></div>
   <div class="adv"><h2>${esc(L.advice)}</h2><ol>${body}</ol></div>
 </div>
 <script>window.onload=()=>window.print()</script></body></html>`);

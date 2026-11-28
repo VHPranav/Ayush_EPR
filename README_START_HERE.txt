@@ -82,6 +82,14 @@ existing medicines (name as written + chemical / generic name + reason + prescri
 "Fill from intake form" turns the patient's tablet answers into note lines (habits, sleep, bowels, therapies).
 Every save is a new signed version (clinical record section INITIAL_EXAM); earlier versions stay listed below.
 
+CLINICAL NOTES
+Clinical > Clinical notes holds every visit after the Initial exam: consultations, follow-ups, weekly updates by
+phone / Viber / WhatsApp / email and therapy notes. Each note has the contact, progress (better / same / worse),
+what the patient reports, pulse & observation, weight / BP, plan, "therapy changed" (opens Prescription) and the
+next follow-up date, which can be booked into Appointments in the same step. Notes are signed clinical records
+(section NOTE); "Correct" saves a signed amendment with a reason and keeps the original. The Doctor page shows the
+latest three.
+
 DOCUMENTS AND REPORTS
 "Take photo" opens the tablet's rear camera; several photos (e.g. each page) can be saved at once. Large photos are
 scaled to 2400 px before upload. Each report can have a title and the date printed on it. Images and PDFs show as
@@ -93,8 +101,17 @@ optionally "mix with" and extra instructions. The printout writes the sentences 
 (web/lib/prescription-text.ts); text the doctor types is printed as written. Diagnosis and diet start from the
 latest Initial exam. Letterhead, doctor block, the note after the first oral therapy and the standing advice are
 edited under Prescription > Prescription settings (Super Admin), separately for English and Montenegrin.
-The logo is web/public/letterhead-logo.png (cut from a screenshot for now: replace it with the clinic's PNG).
-Internal notes are not printed. Pharmacy and dispensing read the same lines as before.
+The prescription has no logo; web/public/letterhead-logo.png is used on the DHL documents.
+The layout follows the clinic's "CG PRESCRIPTION - DETAILED" sheet: PAT IME / REGN NO / DATE, the therapies
+(dose, formula and times highlighted), the hydration advice, changes to medicines, diet, then the other advice.
+Internal notes and the diagnosis are not printed. Pharmacy and dispensing read the same lines as before.
+
+THERAPY LABELS (LABEL MAKER)
+Prescription > history > "Labels": one label per powder / elixir (and the powder it is mixed with), laid out like the
+clinic's paper label: patient name and the total (e.g. 80gr, underlined), then each part and its weight. Numbers in
+brackets are parts: SD + GRO + RA(2) for 80gr gives 20gr each and RA twice. Totals, rows and names can be changed
+before printing; nothing is saved. Label width / height (mm) are remembered per computer; each label prints as one
+page of that size, so choose the label maker in the print window. Code: web/lib/labels.ts.
 
 DHL SHIPPING DOCUMENTS
 Pharmacy & catalogue > Herbal products holds each preparation: code (e.g. 15, Chandra, CNR-SO-M, or a whole

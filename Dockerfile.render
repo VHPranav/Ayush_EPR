@@ -1,0 +1,34 @@
+# One container for Render: the Express API (127.0.0.1:4000) and the Next.js web app (Render's $PORT) together.
+# Used by render.yaml only; docker-compose keeps using ./Dockerfile and ./web/Dockerfile.
+FROM node:22-alpine AS webdeps
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+
+FROM node:22-alpine AS webbuild
+WORKDIR /web
+COPY --from=webdeps /web/node_modules ./node_modules
+COPY web/ ./
+# Next resolves rewrites at build time: the API is in the same container.
+ENV API_URL=http://127.0.0.1:4000 NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
+
+FROM node:22-alpine
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
+WORKDIR /app/api
+COPY server/package.json server/package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+COPY server/server.js server/db.js server/permissions.js server/bootstrap.js server/patient-links.js server/transaction.js server/validation.js server/migrations.js server/dispensing.js server/chart-safety.js server/uploads.js server/intake.js server/invoices.js server/prescription-settings.js server/shipping.js ./
+COPY server/migrations ./migrations
+COPY server/fonts ./fonts
+COPY server/assets ./assets
+# db.js reads ../schema.sql
+COPY schema.sql /app/schema.sql
+COPY --from=webbuild /web/.next/standalone /app/web
+COPY --from=webbuild /web/.next/static /app/web/.next/static
+COPY --from=webbuild /web/public /app/web/public
+COPY deploy/render/start.mjs /app/start.mjs
+RUN mkdir -p /app/api/storage && chown -R node:node /app
+USER node
+EXPOSE 10000
+CMD ["node", "/app/start.mjs"]
